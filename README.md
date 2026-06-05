@@ -32,6 +32,10 @@ A reverse-engineered proxy for the GitHub Copilot API that exposes it as an Open
 ## Features
 
 - **OpenAI & Anthropic Compatibility**: Exposes GitHub Copilot as an OpenAI-compatible (`/v1/chat/completions`, `/v1/models`, `/v1/embeddings`) and Anthropic-compatible (`/v1/messages`) API.
+- **GPT-5 family via the Responses API**: Models that GitHub only serves over the `/responses` endpoint (e.g. the GPT-5 family) are routed there transparently and translated back to chat-completion shape, so they work through both the OpenAI and Anthropic endpoints, streaming or not. See [Reasoning Effort & Context Directives](#reasoning-effort--context-directives).
+- **Reasoning effort & context directives**: Request a model's reasoning effort or context window with a bracketed model-name suffix, e.g. `gpt-5.5[high]` or `claude-opus-4.8[1m]`.
+- **Persistent token-usage accounting**: Every request's token usage is logged locally and queryable via `GET /usage/tokens`. See [Token Usage Accounting](#token-usage-accounting).
+- **Resilient by default**: Long streaming completions no longer trip undici's stock 300s timeout (configurable via `COPILOT_API_TIMEOUT_MS`), and transient DNS failures during token refresh can no longer crash the process.
 - **Claude Code Integration**: Easily configure and launch [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) to use Copilot as its backend with a simple command-line flag (`--claude-code`).
 - **Usage Dashboard**: A web-based dashboard to monitor your Copilot API usage, view quotas, and see detailed statistics.
 - **Rate Limit Control**: Manage API usage with rate-limiting options (`--rate-limit`) and a waiting mechanism (`--wait`) to prevent errors from rapid requests.
@@ -204,10 +208,96 @@ These endpoints are designed to be compatible with the Anthropic Messages API.
 
 New endpoints for monitoring your Copilot usage and quotas.
 
-| Endpoint     | Method | Description                                                  |
-| ------------ | ------ | ------------------------------------------------------------ |
-| `GET /usage` | `GET`  | Get detailed Copilot usage statistics and quota information. |
-| `GET /token` | `GET`  | Get the current Copilot token being used by the API.         |
+| Endpoint            | Method | Description                                                                                        |
+| ------------------- | ------ | -------------------------------------------------------------------------------------------------- |
+| `GET /usage`        | `GET`  | Get detailed Copilot usage statistics and quota information (from GitHub).                          |
+| `GET /usage/tokens` | `GET`  | Get this proxy's locally-recorded token usage, aggregated by model and day. See below.             |
+| `GET /token`        | `GET`  | Get the current Copilot token being used by the API.                                               |
+
+## Reasoning Effort & Context Directives
+
+Some Copilot capabilities are request parameters rather than separate models. To
+request them with any client (including ones that only let you set a model
+name), append a bracketed directive to the model id. The directive is parsed and
+stripped before the request reaches GitHub.
+
+| Model name             | Effect                                                              |
+| ---------------------- | ------------------------------------------------------------------ |
+| `gpt-5.5[high]`        | Sets `reasoning_effort` to `high`.                                  |
+| `gpt-5.5[xhigh]`       | Sets `reasoning_effort` to `xhigh`.                                 |
+| `gpt-5.5[high,1m]`     | Combine directives with a comma (or repeat brackets: `[high][1m]`).|
+| `claude-opus-4.8[1m]`  | Recognised and stripped (the suffix is a no-op; see note below).   |
+
+- **Reasoning effort** accepts `none`, `low`, `medium`, `high`, and `xhigh`. The
+  aliases `max` (→ `xhigh`) and `minimal` (→ `low`) are normalised to the nearest
+  value the GPT-5 family accepts. An explicit `reasoning_effort` in the request
+  body always takes precedence over the suffix.
+- **GPT-5 routing** is automatic: if `/chat/completions` rejects a model with
+  `unsupported_api_for_model`, the proxy transparently retries it over the
+  `/responses` endpoint and remembers the choice for subsequent requests.
+- **Context (`1m`)** is recognised and stripped, but it is informational only —
+  the proxy does **not** need to send anything extra to unlock a large context.
+  Newer Claude models such as `claude-opus-4.8` advertise a 1M-token context
+  window natively, so a plain `claude-opus-4.8` request already gets the full
+  window. Older 4.6/4.7 expose 1M as a dedicated model id
+  (`claude-opus-4.6-1m`, `claude-opus-4.7-1m-internal`) which you pass through
+  directly. The 200K/1M switch shown in some editors is a client-side
+  context-budgeting choice, not an API parameter.
+
+## Token Usage Accounting
+
+The proxy records the token usage of every completion it serves (OpenAI or
+Anthropic, streaming or not, chat or `/responses`) to a local JSON Lines file at
+`~/.local/share/copilot-api/usage.jsonl`. Recording is best-effort and never
+interferes with a request.
+
+Query the aggregated totals with `GET /usage/tokens` (also available as
+`/v1/usage/tokens`):
+
+```sh
+# Everything recorded so far
+curl http://localhost:4141/usage/tokens
+
+# Only a specific model
+curl "http://localhost:4141/usage/tokens?model=claude-opus-4.8"
+
+# Only since a given ISO timestamp (inclusive)
+curl "http://localhost:4141/usage/tokens?since=2026-06-01"
+```
+
+The response aggregates `requests`, `prompt_tokens`, `completion_tokens`,
+`cached_tokens`, and `total_tokens` overall, `by_model`, and `by_day`:
+
+```json
+{
+  "total": {
+    "requests": 4,
+    "prompt_tokens": 40,
+    "completion_tokens": 38,
+    "cached_tokens": 0,
+    "total_tokens": 78
+  },
+  "by_model": {
+    "claude-opus-4.8": { "requests": 3, "prompt_tokens": 32, "completion_tokens": 32, "cached_tokens": 0, "total_tokens": 64 },
+    "gpt-5.5": { "requests": 1, "prompt_tokens": 8, "completion_tokens": 6, "cached_tokens": 0, "total_tokens": 14 }
+  },
+  "by_day": {
+    "2026-06-05": { "requests": 4, "prompt_tokens": 40, "completion_tokens": 38, "cached_tokens": 0, "total_tokens": 78 }
+  }
+}
+```
+
+## Network Timeouts
+
+Long agentic completions can take many minutes to return the first byte, which
+trips undici's stock 300-second timeout and surfaces as `UND_ERR_HEADERS_TIMEOUT`
+or `BodyTimeoutError`. The proxy raises the headers/body timeout to 15 minutes by
+default. Override it (in milliseconds) with the `COPILOT_API_TIMEOUT_MS`
+environment variable:
+
+```sh
+COPILOT_API_TIMEOUT_MS=1800000 npx copilot-api@latest start # 30 minutes
+```
 
 ## Example Usage
 
