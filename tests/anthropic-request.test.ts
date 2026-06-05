@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test"
+import { describe, test, expect, afterEach } from "bun:test"
 import { z } from "zod"
 
 import type { AnthropicMessagesPayload } from "~/routes/messages/anthropic-types"
@@ -309,5 +309,58 @@ describe("OpenAI Chat Completion v1 Request Payload Validation with Zod", () => 
     expect(isValidChatCompletionRequest(undefined)).toBe(false)
     expect(isValidChatCompletionRequest("a string")).toBe(false)
     expect(isValidChatCompletionRequest(123)).toBe(false)
+  })
+})
+
+describe("COPILOT_API_ANTHROPIC_EFFORT injection", () => {
+  const ENV_KEY = "COPILOT_API_ANTHROPIC_EFFORT"
+  const original = process.env[ENV_KEY]
+
+  afterEach(() => {
+    if (original === undefined) {
+      delete process.env.COPILOT_API_ANTHROPIC_EFFORT
+    } else {
+      process.env[ENV_KEY] = original
+    }
+  })
+
+  const claudePayload: AnthropicMessagesPayload = {
+    model: "claude-opus-4.8",
+    messages: [{ role: "user", content: "Hello!" }],
+    max_tokens: 16,
+  }
+
+  test("injects reasoning_effort for Claude models when env is set", () => {
+    process.env[ENV_KEY] = "max"
+    const out = translateToOpenAI(claudePayload)
+    expect(out.reasoning_effort).toBe("max")
+  })
+
+  test("normalizes case/whitespace of the effort value", () => {
+    process.env[ENV_KEY] = "  XHigh "
+    const out = translateToOpenAI(claudePayload)
+    expect(out.reasoning_effort).toBe("xhigh")
+  })
+
+  test("omits reasoning_effort when env is unset", () => {
+    delete process.env.COPILOT_API_ANTHROPIC_EFFORT
+    const out = translateToOpenAI(claudePayload)
+    expect(out.reasoning_effort).toBeUndefined()
+  })
+
+  test("ignores invalid effort values instead of breaking the request", () => {
+    process.env[ENV_KEY] = "bogus_xyz"
+    const out = translateToOpenAI(claudePayload)
+    expect(out.reasoning_effort).toBeUndefined()
+  })
+
+  test("does not inject effort for non-Claude models", () => {
+    process.env[ENV_KEY] = "max"
+    const out = translateToOpenAI({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: "Hello!" }],
+      max_tokens: 16,
+    })
+    expect(out.reasoning_effort).toBeUndefined()
   })
 })

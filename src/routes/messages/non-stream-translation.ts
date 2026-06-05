@@ -1,3 +1,5 @@
+import consola from "consola"
+
 import {
   type ChatCompletionResponse,
   type ChatCompletionsPayload,
@@ -26,11 +28,33 @@ import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 // Payload translation
 
+// Effort levels the Copilot backend accepts for Claude models. Claude Code
+// strips any model-name effort suffix before sending, and the Anthropic wire
+// format has no `reasoning_effort` field, so a Claude Code request can never
+// raise Opus 4.8 above its default ("high") effort on its own. When
+// COPILOT_API_ANTHROPIC_EFFORT is set (e.g. "max") we inject it here so the
+// effort actually reaches the backend. Invalid values are ignored (warned)
+// rather than breaking every request.
+const CLAUDE_EFFORT_VALUES = new Set(["low", "medium", "high", "xhigh", "max"])
+
+function resolveAnthropicEffort(model: string): string | undefined {
+  if (!model.startsWith("claude")) return undefined
+  const raw = process.env.COPILOT_API_ANTHROPIC_EFFORT?.trim().toLowerCase()
+  if (!raw) return undefined
+  if (CLAUDE_EFFORT_VALUES.has(raw)) return raw
+  consola.warn(
+    `Ignoring invalid COPILOT_API_ANTHROPIC_EFFORT="${raw}"; expected one of ${[...CLAUDE_EFFORT_VALUES].join(", ")}`,
+  )
+  return undefined
+}
+
 export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
 ): ChatCompletionsPayload {
+  const model = translateModelName(payload.model)
+  const effort = resolveAnthropicEffort(model)
   return {
-    model: translateModelName(payload.model),
+    model,
     messages: translateAnthropicMessagesToOpenAI(
       payload.messages,
       payload.system,
@@ -43,6 +67,7 @@ export function translateToOpenAI(
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
+    ...(effort && { reasoning_effort: effort }),
   }
 }
 
