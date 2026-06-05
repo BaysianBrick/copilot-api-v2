@@ -23,14 +23,17 @@ type ChatToolCalls = NonNullable<
 >
 type ChatDelta = ChatCompletionChunk["choices"][number]["delta"]
 
-const ALLOWED_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh"])
+const ALLOWED_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh"])
 
-// Our `max` alias is not a real API value; treat it as the strongest the
-// upstream understands.
+// Map a requested effort onto a value the upstream actually accepts.
+// `max` is our alias for the strongest tier. `minimal` is a valid OpenAI value
+// but Copilot's GPT-5 models reject it (supported: none/low/medium/high/xhigh),
+// so we fold it onto the nearest real tier, `low`, to avoid a 400.
 function normalizeEffort(effort: string | undefined): string | undefined {
   if (!effort) return undefined
   const value = effort.toLowerCase()
   if (value === "max") return "xhigh"
+  if (value === "minimal") return "low"
   return ALLOWED_EFFORTS.has(value) ? value : undefined
 }
 

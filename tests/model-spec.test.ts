@@ -20,6 +20,10 @@ describe("parseModelSpec", () => {
     expect(parseModelSpec("gpt-5.5[xhigh]").effort).toBe("xhigh")
   })
 
+  test("parses none effort", () => {
+    expect(parseModelSpec("gpt-5.5[none]").effort).toBe("none")
+  })
+
   test("parses 1m context directive and strips it", () => {
     const spec = parseModelSpec("claude-opus-4.8[1m]")
     expect(spec.model).toBe("claude-opus-4.8")

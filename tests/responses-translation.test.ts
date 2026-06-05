@@ -118,6 +118,26 @@ describe("chatToResponsesPayload", () => {
       }).reasoning,
     ).toBeUndefined()
   })
+
+  test("folds 'minimal' onto 'low' (gpt-5 rejects minimal)", () => {
+    expect(
+      chatToResponsesPayload({
+        model: "gpt-5.5",
+        messages: [{ role: "user", content: "hi" }],
+        reasoning_effort: "minimal",
+      }).reasoning,
+    ).toEqual({ effort: "low" })
+  })
+
+  test("passes through 'none' effort", () => {
+    expect(
+      chatToResponsesPayload({
+        model: "gpt-5.5",
+        messages: [{ role: "user", content: "hi" }],
+        reasoning_effort: "none",
+      }).reasoning,
+    ).toEqual({ effort: "none" })
+  })
 })
 
 describe("responsesResultToChat", () => {

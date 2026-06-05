@@ -16,6 +16,7 @@
 // already carry a `[1m]` suffix from 400-ing against the upstream model list.
 
 export type ReasoningEffort =
+  | "none"
   | "minimal"
   | "low"
   | "medium"
@@ -24,6 +25,7 @@ export type ReasoningEffort =
   | "max"
 
 const EFFORT_VALUES = new Set<ReasoningEffort>([
+  "none",
   "minimal",
   "low",
   "medium",
