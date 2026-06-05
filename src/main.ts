@@ -5,7 +5,10 @@ import { defineCommand, runMain } from "citty"
 import { auth } from "./auth"
 import { checkUsage } from "./check-usage"
 import { debug } from "./debug"
+import { installProcessGuards } from "./lib/process-guards"
 import { start } from "./start"
+
+installProcessGuards()
 
 const main = defineCommand({
   meta: {

@@ -3,13 +3,54 @@ import { events } from "fetch-event-stream"
 
 import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
+import { parseModelSpec } from "~/lib/model-spec"
 import { state } from "~/lib/state"
+
+import { createResponses, type ResponsesResult } from "./create-responses"
+import {
+  chatToResponsesPayload,
+  responsesResultToChat,
+  translateResponsesStream,
+} from "./responses-translation"
+
+// Models that upstream only serves via `/responses` (learned at runtime when
+// `/chat/completions` rejects them with `unsupported_api_for_model`).
+const responsesOnlyModels = new Set<string>()
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
+  // Normalize capability directives such as "gpt-5.5[high]" or "model[1m]":
+  // strip the suffix and lift a reasoning effort into the payload.
+  const spec = parseModelSpec(payload.model)
+  const effortUnset = (payload.reasoning_effort ?? null) === null
+  const req: ChatCompletionsPayload = {
+    ...payload,
+    model: spec.model,
+    ...(spec.effort && effortUnset && { reasoning_effort: spec.effort }),
+  }
+
+  if (responsesOnlyModels.has(req.model)) {
+    return createViaResponses(req)
+  }
+
+  try {
+    return await createViaChatCompletions(req)
+  } catch (error) {
+    if (await isUnsupportedApiError(error)) {
+      consola.info(
+        `Model "${req.model}" is not served via /chat/completions; retrying via /responses.`,
+      )
+      responsesOnlyModels.add(req.model)
+      return createViaResponses(req)
+    }
+    throw error
+  }
+}
+
+const createViaChatCompletions = async (payload: ChatCompletionsPayload) => {
   const enableVision = payload.messages.some(
     (x) =>
       typeof x.content !== "string"
@@ -44,6 +85,32 @@ export const createChatCompletions = async (
   }
 
   return (await response.json()) as ChatCompletionResponse
+}
+
+const createViaResponses = async (payload: ChatCompletionsPayload) => {
+  const responsesPayload = chatToResponsesPayload(payload)
+  const result = await createResponses(responsesPayload)
+
+  if (payload.stream) {
+    return translateResponsesStream(
+      result as AsyncIterable<{ data?: string; event?: string }>,
+    )
+  }
+
+  return responsesResultToChat(result as ResponsesResult)
+}
+
+// Detect the upstream "this model needs the /responses endpoint" rejection.
+// Clones the response so the body is still readable if we rethrow.
+const isUnsupportedApiError = async (error: unknown): Promise<boolean> => {
+  if (!(error instanceof HTTPError)) return false
+  if (error.response.status !== 400) return false
+  try {
+    const text = await error.response.clone().text()
+    return text.includes("unsupported_api_for_model")
+  } catch {
+    return false
+  }
 }
 
 // Streaming types
@@ -140,6 +207,8 @@ export interface ChatCompletionsPayload {
   logprobs?: boolean | null
   response_format?: { type: "json_object" } | null
   seed?: number | null
+  /** Reasoning effort for reasoning-capable models (GPT-5 family, etc.). */
+  reasoning_effort?: string | null
   tools?: Array<Tool> | null
   tool_choice?:
     | "none"

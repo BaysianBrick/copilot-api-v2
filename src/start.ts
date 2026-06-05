@@ -3,9 +3,10 @@
 import { defineCommand } from "citty"
 import clipboard from "clipboardy"
 import consola from "consola"
-import { serve, type ServerHandler } from "srvx"
+import { serve } from "srvx"
 import invariant from "tiny-invariant"
 
+import { configureGlobalDispatcher } from "./lib/network"
 import { ensurePaths } from "./lib/paths"
 import { initProxyFromEnv } from "./lib/proxy"
 import { generateEnvScript } from "./lib/shell"
@@ -28,8 +29,13 @@ interface RunServerOptions {
 }
 
 export async function runServer(options: RunServerOptions): Promise<void> {
+  // Raise undici timeouts before the first outbound fetch. The proxy path
+  // installs its own dispatcher (also with long timeouts); the direct path
+  // needs this explicit call since Node otherwise uses the stock 300s Agent.
   if (options.proxyEnv) {
     initProxyFromEnv()
+  } else {
+    configureGlobalDispatcher()
   }
 
   if (options.verbose) {
@@ -115,7 +121,7 @@ export async function runServer(options: RunServerOptions): Promise<void> {
   )
 
   serve({
-    fetch: server.fetch as ServerHandler,
+    fetch: server.fetch,
     port: options.port,
   })
 }

@@ -2,11 +2,13 @@ import consola from "consola"
 import { getProxyForUrl } from "proxy-from-env"
 import { Agent, ProxyAgent, setGlobalDispatcher, type Dispatcher } from "undici"
 
+import { agentTimeoutOptions } from "./network"
+
 export function initProxyFromEnv(): void {
   if (typeof Bun !== "undefined") return
 
   try {
-    const direct = new Agent()
+    const direct = new Agent(agentTimeoutOptions())
     const proxies = new Map<string, ProxyAgent>()
 
     // We only need a minimal dispatcher that implements `dispatch` at runtime.
@@ -34,7 +36,7 @@ export function initProxyFromEnv(): void {
           }
           let agent = proxies.get(proxyUrl)
           if (!agent) {
-            agent = new ProxyAgent(proxyUrl)
+            agent = new ProxyAgent({ uri: proxyUrl, ...agentTimeoutOptions() })
             proxies.set(proxyUrl, agent)
           }
           let label = proxyUrl
@@ -45,7 +47,7 @@ export function initProxyFromEnv(): void {
             /* noop */
           }
           consola.debug(`HTTP proxy route: ${origin.hostname} via ${label}`)
-          return (agent as unknown as Dispatcher).dispatch(options, handler)
+          return agent.dispatch(options, handler)
         } catch {
           return (direct as unknown as Dispatcher).dispatch(options, handler)
         }
