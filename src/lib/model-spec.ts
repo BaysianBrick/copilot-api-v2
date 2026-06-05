@@ -14,6 +14,17 @@
 //
 // Stripping is the important part: it keeps pre-existing client configs that
 // already carry a `[1m]` suffix from 400-ing against the upstream model list.
+//
+// NOTE on the `1m` directive: it is recognised and stripped, but the proxy does
+// NOT need to send anything extra to "unlock" 1M context. The newer Claude
+// models (e.g. claude-opus-4.8) advertise max_context_window_tokens=1_000_000
+// natively in /models — verified empirically: a plain `claude-opus-4.8` request
+// with a ~414K-token prompt returns 200 (usage.prompt_tokens=413886). The
+// 200K/1M switch shown in the VS Code UI is a client-side context-budgeting
+// choice, not an API parameter. Older 4.6/4.7 expose 1M as a separate model id
+// (claude-opus-4.6-1m / claude-opus-4.7-1m-internal) which clients pass through
+// directly. So `context1m` is informational only; the upstream request body is
+// passed through unchanged and large prompts already get the full window.
 
 export type ReasoningEffort =
   | "none"
