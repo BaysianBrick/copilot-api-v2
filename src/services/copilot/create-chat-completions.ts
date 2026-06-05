@@ -5,6 +5,11 @@ import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { parseModelSpec } from "~/lib/model-spec"
 import { state } from "~/lib/state"
+import {
+  recordUsage,
+  trackStreamUsage,
+  type UsageVia,
+} from "~/lib/usage-tracker"
 
 import { createResponses, type ResponsesResult } from "./create-responses"
 import {
@@ -17,9 +22,36 @@ import {
 // `/chat/completions` rejects them with `unsupported_api_for_model`).
 const responsesOnlyModels = new Set<string>()
 
+type CompletionResult =
+  | ChatCompletionResponse
+  | AsyncIterable<{ data?: string }>
+
+// Record token usage for a completed call. Streaming results are wrapped so the
+// terminal usage chunk is captured; non-streaming results are recorded inline.
+// Either way the value handed back to the caller is shape-compatible with what
+// the OpenAI/Anthropic handlers already expect.
+function finalizeUsage(
+  meta: { model: string; via: UsageVia; stream: boolean },
+  result: CompletionResult,
+): CompletionResult {
+  if (meta.stream) {
+    return trackStreamUsage(
+      { model: meta.model, via: meta.via },
+      result as AsyncIterable<{ data?: string }>,
+    )
+  }
+  void recordUsage({
+    model: meta.model,
+    via: meta.via,
+    stream: false,
+    usage: (result as ChatCompletionResponse).usage,
+  })
+  return result
+}
+
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
-) => {
+): Promise<CompletionResult> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
   // Normalize capability directives such as "gpt-5.5[high]" or "model[1m]":
@@ -31,20 +63,30 @@ export const createChatCompletions = async (
     model: spec.model,
     ...(spec.effort && effortUnset && { reasoning_effort: spec.effort }),
   }
+  const stream = req.stream ?? false
 
   if (responsesOnlyModels.has(req.model)) {
-    return createViaResponses(req)
+    return finalizeUsage(
+      { model: req.model, via: "responses", stream },
+      await createViaResponses(req),
+    )
   }
 
   try {
-    return await createViaChatCompletions(req)
+    return finalizeUsage(
+      { model: req.model, via: "chat", stream },
+      await createViaChatCompletions(req),
+    )
   } catch (error) {
     if (await isUnsupportedApiError(error)) {
       consola.info(
         `Model "${req.model}" is not served via /chat/completions; retrying via /responses.`,
       )
       responsesOnlyModels.add(req.model)
-      return createViaResponses(req)
+      return finalizeUsage(
+        { model: req.model, via: "responses", stream },
+        await createViaResponses(req),
+      )
     }
     throw error
   }
