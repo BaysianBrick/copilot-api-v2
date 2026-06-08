@@ -28,22 +28,32 @@ import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 // Payload translation
 
-// Effort levels the Copilot backend accepts for Claude models. Claude Code
-// strips any model-name effort suffix before sending, and the Anthropic wire
-// format has no `reasoning_effort` field, so a Claude Code request can never
-// raise Opus 4.8 above its default ("high") effort on its own. When
-// COPILOT_API_ANTHROPIC_EFFORT is set (e.g. "max") we inject it here so the
+// Effort levels the Copilot backend accepts for reasoning-effort models. Claude
+// Code strips any model-name effort suffix before sending, and the Anthropic
+// wire format has no `reasoning_effort` field, so a Claude Code request cannot
+// raise a model above its default effort on its own. When
+// COPILOT_API_ANTHROPIC_EFFORT is set (e.g. "xhigh") we inject it here so the
 // effort actually reaches the backend. Invalid values are ignored (warned)
 // rather than breaking every request.
-const CLAUDE_EFFORT_VALUES = new Set(["low", "medium", "high", "xhigh", "max"])
+const REASONING_EFFORT_VALUES = new Set([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+])
+
+function supportsInjectedEffort(model: string): boolean {
+  return model.startsWith("claude") || model.startsWith("gpt-5")
+}
 
 function resolveAnthropicEffort(model: string): string | undefined {
-  if (!model.startsWith("claude")) return undefined
+  if (!supportsInjectedEffort(model)) return undefined
   const raw = process.env.COPILOT_API_ANTHROPIC_EFFORT?.trim().toLowerCase()
   if (!raw) return undefined
-  if (CLAUDE_EFFORT_VALUES.has(raw)) return raw
+  if (REASONING_EFFORT_VALUES.has(raw)) return raw
   consola.warn(
-    `Ignoring invalid COPILOT_API_ANTHROPIC_EFFORT="${raw}"; expected one of ${[...CLAUDE_EFFORT_VALUES].join(", ")}`,
+    `Ignoring invalid COPILOT_API_ANTHROPIC_EFFORT="${raw}"; expected one of ${[...REASONING_EFFORT_VALUES].join(", ")}`,
   )
   return undefined
 }

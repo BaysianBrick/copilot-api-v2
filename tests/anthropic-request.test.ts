@@ -354,7 +354,17 @@ describe("COPILOT_API_ANTHROPIC_EFFORT injection", () => {
     expect(out.reasoning_effort).toBeUndefined()
   })
 
-  test("does not inject effort for non-Claude models", () => {
+  test("injects reasoning_effort for GPT-5 models when env is set", () => {
+    process.env[ENV_KEY] = "xhigh"
+    const out = translateToOpenAI({
+      model: "gpt-5.5[1m]",
+      messages: [{ role: "user", content: "Hello!" }],
+      max_tokens: 16,
+    })
+    expect(out.reasoning_effort).toBe("xhigh")
+  })
+
+  test("does not inject effort for models without reasoning effort", () => {
     process.env[ENV_KEY] = "max"
     const out = translateToOpenAI({
       model: "gpt-4o",
