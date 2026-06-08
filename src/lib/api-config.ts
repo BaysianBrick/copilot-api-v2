@@ -50,3 +50,32 @@ export const githubHeaders = (state: State) => ({
 export const GITHUB_BASE_URL = "https://github.com"
 export const GITHUB_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 export const GITHUB_APP_SCOPES = ["read:user"].join(" ")
+
+/**
+ * Filters a set of incoming client request headers, retaining only those
+ * that are safe and necessary to forward upstream (such as Copilot session
+ * tracking and edit session metadata). This prevents header leakage (e.g.
+ * client-supplied Host, Authorization, Content-Length) while keeping sessions intact.
+ */
+export function filterClientHeaders(
+  clientHeaders?: Record<string, string>,
+): Record<string, string> {
+  if (!clientHeaders) return {}
+  const forwarded: Record<string, string> = {}
+  for (const [key, value] of Object.entries(clientHeaders)) {
+    const lk = key.toLowerCase()
+    if (
+      (lk.startsWith("copilot-")
+        || lk.startsWith("x-copilot-")
+        || lk.startsWith("x-github-")
+        || lk.startsWith("x-vscode-"))
+      && lk !== "authorization"
+      && lk !== "content-type"
+      && lk !== "content-length"
+      && lk !== "host"
+    ) {
+      forwarded[key] = value
+    }
+  }
+  return forwarded
+}

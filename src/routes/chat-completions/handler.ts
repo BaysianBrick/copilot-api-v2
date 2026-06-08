@@ -47,7 +47,8 @@ export async function handleCompletion(c: Context) {
     consola.debug("Set max_tokens to:", JSON.stringify(payload.max_tokens))
   }
 
-  const response = await createChatCompletions(payload)
+  const clientHeaders = c.req.header()
+  const response = await createChatCompletions(payload, clientHeaders)
 
   if (isNonStreaming(response)) {
     consola.debug("Non-streaming response:", JSON.stringify(response))

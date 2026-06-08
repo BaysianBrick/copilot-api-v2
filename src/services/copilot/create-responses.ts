@@ -1,7 +1,11 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
-import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
+import {
+  copilotHeaders,
+  copilotBaseUrl,
+  filterClientHeaders,
+} from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
@@ -139,7 +143,10 @@ export interface ResponsesResult {
  * Call the upstream `/responses` endpoint. Returns the parsed result for
  * non-streaming requests, or the raw SSE event iterator for streaming requests.
  */
-export const createResponses = async (payload: ResponsesPayload) => {
+export const createResponses = async (
+  payload: ResponsesPayload,
+  clientHeaders?: Record<string, string>,
+) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
   const enableVision = payload.input.some(
@@ -160,6 +167,7 @@ export const createResponses = async (payload: ResponsesPayload) => {
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
     "X-Initiator": isAgentCall ? "agent" : "user",
+    ...filterClientHeaders(clientHeaders),
   }
 
   const response = await fetch(`${copilotBaseUrl(state)}/responses`, {

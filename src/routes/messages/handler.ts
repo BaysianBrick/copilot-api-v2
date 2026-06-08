@@ -38,7 +38,8 @@ export async function handleCompletion(c: Context) {
     await awaitApproval()
   }
 
-  const response = await createChatCompletions(openAIPayload)
+  const clientHeaders = c.req.header()
+  const response = await createChatCompletions(openAIPayload, clientHeaders)
 
   if (isNonStreaming(response)) {
     consola.debug(

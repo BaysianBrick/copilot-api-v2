@@ -1,7 +1,11 @@
 import consola from "consola"
 import { events } from "fetch-event-stream"
 
-import { copilotHeaders, copilotBaseUrl } from "~/lib/api-config"
+import {
+  copilotHeaders,
+  copilotBaseUrl,
+  filterClientHeaders,
+} from "~/lib/api-config"
 import { HTTPError } from "~/lib/error"
 import { parseModelSpec } from "~/lib/model-spec"
 import { state } from "~/lib/state"
@@ -51,6 +55,7 @@ function finalizeUsage(
 
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
+  clientHeaders?: Record<string, string>,
 ): Promise<CompletionResult> => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
@@ -68,14 +73,14 @@ export const createChatCompletions = async (
   if (responsesOnlyModels.has(req.model)) {
     return finalizeUsage(
       { model: req.model, via: "responses", stream },
-      await createViaResponses(req),
+      await createViaResponses(req, clientHeaders),
     )
   }
 
   try {
     return finalizeUsage(
       { model: req.model, via: "chat", stream },
-      await createViaChatCompletions(req),
+      await createViaChatCompletions(req, clientHeaders),
     )
   } catch (error) {
     if (await isUnsupportedApiError(error)) {
@@ -85,14 +90,17 @@ export const createChatCompletions = async (
       responsesOnlyModels.add(req.model)
       return finalizeUsage(
         { model: req.model, via: "responses", stream },
-        await createViaResponses(req),
+        await createViaResponses(req, clientHeaders),
       )
     }
     throw error
   }
 }
 
-const createViaChatCompletions = async (payload: ChatCompletionsPayload) => {
+const createViaChatCompletions = async (
+  payload: ChatCompletionsPayload,
+  clientHeaders?: Record<string, string>,
+) => {
   const enableVision = payload.messages.some(
     (x) =>
       typeof x.content !== "string"
@@ -109,6 +117,7 @@ const createViaChatCompletions = async (payload: ChatCompletionsPayload) => {
   const headers: Record<string, string> = {
     ...copilotHeaders(state, enableVision),
     "X-Initiator": isAgentCall ? "agent" : "user",
+    ...filterClientHeaders(clientHeaders),
   }
 
   const response = await fetch(`${copilotBaseUrl(state)}/chat/completions`, {
@@ -129,9 +138,12 @@ const createViaChatCompletions = async (payload: ChatCompletionsPayload) => {
   return (await response.json()) as ChatCompletionResponse
 }
 
-const createViaResponses = async (payload: ChatCompletionsPayload) => {
+const createViaResponses = async (
+  payload: ChatCompletionsPayload,
+  clientHeaders?: Record<string, string>,
+) => {
   const responsesPayload = chatToResponsesPayload(payload)
-  const result = await createResponses(responsesPayload)
+  const result = await createResponses(responsesPayload, clientHeaders)
 
   if (payload.stream) {
     return translateResponsesStream(
