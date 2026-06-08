@@ -216,6 +216,9 @@ New endpoints for monitoring your Copilot usage and quotas.
 
 ## Reasoning Effort & Context Directives
 
+See [Lessons Learned](docs/lessons-learned.md) for the edge cases discovered
+while wiring these directives through Claude Code and GPT-5-family models.
+
 Some Copilot capabilities are request parameters rather than separate models. To
 request them with any client (including ones that only let you set a model
 name), append a bracketed directive to the model id. The directive is parsed and
@@ -232,6 +235,11 @@ stripped before the request reaches GitHub.
   aliases `max` (→ `xhigh`) and `minimal` (→ `low`) are normalised to the nearest
   value the GPT-5 family accepts. An explicit `reasoning_effort` in the request
   body always takes precedence over the suffix.
+- **Claude Code effort injection** is controlled by
+  `COPILOT_API_ANTHROPIC_EFFORT` for the Anthropic-compatible `/v1/messages`
+  path. Keep client-side context suffixes clean (for example `gpt-5.5[1m]`) and
+  pass effort through the environment (for example
+  `COPILOT_API_ANTHROPIC_EFFORT=xhigh`) instead of relying on a combined suffix.
 - **GPT-5 routing** is automatic: if `/chat/completions` rejects a model with
   `unsupported_api_for_model`, the proxy transparently retries it over the
   `/responses` endpoint and remembers the choice for subsequent requests.
