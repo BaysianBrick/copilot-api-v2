@@ -84,3 +84,22 @@ test("filters and forwards client-supplied copilot/vscode/github headers", async
   expect(headers["content-length"]).toBeUndefined()
   expect(headers["normal-header"]).toBeUndefined()
 })
+
+test("automatically strips reasoning_effort and thinking for non-reasoning models", async () => {
+  const payload: ChatCompletionsPayload & { thinking?: unknown } = {
+    messages: [{ role: "user", content: "hi" }],
+    model: "claude-3-5-sonnet",
+    reasoning_effort: "xhigh",
+    thinking: { budget: 1024 },
+  }
+  await createChatCompletions(payload)
+  expect(fetchMock).toHaveBeenCalled()
+  const latestCall = fetchMock.mock.calls.at(-1)
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const bodyText = (latestCall as any)[1].body as string
+  const sentPayload = JSON.parse(bodyText) as Record<string, unknown>
+
+  expect(sentPayload.model).toBe("claude-3-5-sonnet")
+  expect(sentPayload.reasoning_effort).toBeUndefined()
+  expect(sentPayload.thinking).toBeUndefined()
+})

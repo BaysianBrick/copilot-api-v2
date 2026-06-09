@@ -53,6 +53,33 @@ function finalizeUsage(
   return result
 }
 
+function stripIncompatibleReasoningParams(req: ChatCompletionsPayload): void {
+  if (!req.model) return
+  const modelLower = req.model.toLowerCase()
+  const isNonReasoning =
+    modelLower.includes("sonnet")
+    || modelLower.includes("flash")
+    || modelLower.includes("haiku")
+    || modelLower.includes("4o")
+    || modelLower.includes("gpt-4")
+    || modelLower.includes("claude-3")
+  if (!isNonReasoning) return
+
+  if (req.reasoning_effort !== undefined) {
+    consola.info(
+      `[copilot-api-timeout] Stripping incompatible reasoning_effort (${req.reasoning_effort}) for model: ${req.model}`,
+    )
+    delete req.reasoning_effort
+  }
+
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const rawReq = req as any
+  if (rawReq.thinking !== undefined) {
+    /* eslint-disable-next-line @typescript-eslint/no-dynamic-delete */
+    delete rawReq.thinking
+  }
+}
+
 export const createChatCompletions = async (
   payload: ChatCompletionsPayload,
   clientHeaders?: Record<string, string>,
@@ -68,6 +95,9 @@ export const createChatCompletions = async (
     model: spec.model,
     ...(spec.effort && effortUnset && { reasoning_effort: spec.effort }),
   }
+
+  stripIncompatibleReasoningParams(req)
+
   const stream = req.stream ?? false
 
   if (responsesOnlyModels.has(req.model)) {
