@@ -53,6 +53,31 @@ function finalizeUsage(
   return result
 }
 
+// GitHub Copilot's `/chat/completions` backend hard-rejects (400
+// invalid_request_body) any request whose message list ends with an
+// `assistant` turn ("assistant message prefill"), regardless of model.
+// Claude Code's subagent/Task dispatch sometimes constructs exactly this
+// shape (a trailing assistant message used for prefill/continuation on the
+// real Anthropic API). Append a minimal synthetic user turn so the request
+// is structurally valid. This loses the exact-continuation semantics of a
+// true prefill, but avoids a hard failure that otherwise kills the subagent
+// call before it ever reaches the model (0 tokens used).
+function ensureConversationEndsWithUser(
+  messages: Array<Message>,
+): Array<Message> {
+  const last = messages.at(-1)
+  if (!last || last.role !== "assistant") return messages
+  consola.warn(
+    "Appending synthetic user turn: upstream rejects conversations ending in an assistant message (prefill).",
+  )
+  return [...messages, { role: "user", content: "Continue." }]
+}
+
+// Some upstream request shapes carry an Anthropic-style `thinking` field that
+// isn't part of `ChatCompletionsPayload`; type it as `unknown` rather than
+// `any` so accessing/deleting it stays lint-safe.
+type ReasoningPayload = ChatCompletionsPayload & { thinking?: unknown }
+
 function stripIncompatibleReasoningParams(req: ChatCompletionsPayload): void {
   if (!req.model) return
   const modelLower = req.model.toLowerCase()
@@ -72,10 +97,8 @@ function stripIncompatibleReasoningParams(req: ChatCompletionsPayload): void {
     delete req.reasoning_effort
   }
 
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-  const rawReq = req as any
+  const rawReq = req as ReasoningPayload
   if (rawReq.thinking !== undefined) {
-    /* eslint-disable-next-line @typescript-eslint/no-dynamic-delete */
     delete rawReq.thinking
   }
 }
@@ -93,6 +116,7 @@ export const createChatCompletions = async (
   const req: ChatCompletionsPayload = {
     ...payload,
     model: spec.model,
+    messages: ensureConversationEndsWithUser(payload.messages),
     ...(spec.effort && effortUnset && { reasoning_effort: spec.effort }),
   }
 
