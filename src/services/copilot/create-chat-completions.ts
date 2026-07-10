@@ -318,6 +318,7 @@ export interface ChatCompletionsPayload {
   /** Reasoning effort for reasoning-capable models (GPT-5 family, etc.). */
   reasoning_effort?: string | null
   tools?: Array<Tool> | null
+  parallel_tool_calls?: boolean | null
   tool_choice?:
     | "none"
     | "auto"

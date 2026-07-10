@@ -10,16 +10,19 @@ state.copilotToken = "test-token"
 state.vsCodeVersion = "1.0.0"
 state.accountType = "individual"
 
+interface FetchOptions {
+  headers: Record<string, string>
+  body?: string
+}
+
 // Helper to mock fetch
-const fetchMock = mock(
-  (_url: string, opts: { headers: Record<string, string> }) => {
-    return {
-      ok: true,
-      json: () => ({ id: "123", object: "chat.completion", choices: [] }),
-      headers: opts.headers,
-    }
-  },
-)
+const fetchMock = mock((_url: string, opts: FetchOptions) => {
+  return {
+    ok: true,
+    json: () => ({ id: "123", object: "chat.completion", choices: [] }),
+    headers: opts.headers,
+  }
+})
 // @ts-expect-error - Mock fetch doesn't implement all fetch properties
 ;(globalThis as unknown as { fetch: typeof fetch }).fetch = fetchMock
 
@@ -70,6 +73,9 @@ test("filters and forwards client-supplied copilot/vscode/github headers", async
   expect(fetchMock).toHaveBeenCalled()
   // Search the calls for the one that has our test headers
   const latestCall = fetchMock.mock.calls.at(-1)
+  if (!latestCall) {
+    throw new Error("Expected fetch to have been called")
+  }
   const headers = latestCall[1].headers
 
   // Should forward custom headers
@@ -95,8 +101,10 @@ test("automatically strips reasoning_effort and thinking for non-reasoning model
   await createChatCompletions(payload)
   expect(fetchMock).toHaveBeenCalled()
   const latestCall = fetchMock.mock.calls.at(-1)
-  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
-  const bodyText = (latestCall as any)[1].body as string
+  if (!latestCall?.[1].body) {
+    throw new Error("Expected fetch to have been called with a request body")
+  }
+  const bodyText = latestCall[1].body
   const sentPayload = JSON.parse(bodyText) as Record<string, unknown>
 
   expect(sentPayload.model).toBe("claude-3-5-sonnet")

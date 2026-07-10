@@ -17,6 +17,7 @@ export interface AnthropicMessagesPayload {
   tool_choice?: {
     type: "auto" | "any" | "tool" | "none"
     name?: string
+    disable_parallel_tool_use?: boolean
   }
   thinking?: {
     type: "enabled"
@@ -42,7 +43,7 @@ export interface AnthropicImageBlock {
 export interface AnthropicToolResultBlock {
   type: "tool_result"
   tool_use_id: string
-  content: string
+  content?: string | Array<AnthropicToolResultContentBlock>
   is_error?: boolean
 }
 
@@ -57,6 +58,10 @@ export interface AnthropicThinkingBlock {
   type: "thinking"
   thinking: string
 }
+
+export type AnthropicToolResultContentBlock =
+  | AnthropicTextBlock
+  | AnthropicImageBlock
 
 export type AnthropicUserContentBlock =
   | AnthropicTextBlock

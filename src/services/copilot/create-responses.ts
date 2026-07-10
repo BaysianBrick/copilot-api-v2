@@ -66,6 +66,7 @@ export interface ResponsesPayload {
   max_output_tokens?: number | null
   reasoning?: { effort: string }
   tools?: Array<ResponsesTool>
+  parallel_tool_calls?: boolean | null
   tool_choice?:
     | "none"
     | "auto"

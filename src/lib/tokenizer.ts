@@ -20,11 +20,14 @@ type SupportedEncoding = keyof typeof ENCODING_MAP
 
 // Define encoder interface
 interface Encoder {
-  encode: (text: string) => Array<number>
+  encode: (text: string, options?: { allowedSpecial?: "all" }) => Array<number>
 }
 
 // Cache loaded encoders to avoid repeated imports
 const encodingCache = new Map<string, Encoder>()
+
+const encodeText = (encoder: Encoder, text: string): Array<number> =>
+  encoder.encode(text, { allowedSpecial: "all" })
 
 /**
  * Calculate tokens for tool calls
@@ -37,7 +40,7 @@ const calculateToolCallsTokens = (
   let tokens = 0
   for (const toolCall of toolCalls) {
     tokens += constants.funcInit
-    tokens += encoder.encode(JSON.stringify(toolCall)).length
+    tokens += encodeText(encoder, JSON.stringify(toolCall)).length
   }
   tokens += constants.funcEnd
   return tokens
@@ -53,9 +56,9 @@ const calculateContentPartsTokens = (
   let tokens = 0
   for (const part of contentParts) {
     if (part.type === "image_url") {
-      tokens += encoder.encode(part.image_url.url).length + 85
+      tokens += encodeText(encoder, part.image_url.url).length + 85
     } else if (part.text) {
-      tokens += encoder.encode(part.text).length
+      tokens += encodeText(encoder, part.text).length
     }
   }
   return tokens
@@ -74,7 +77,7 @@ const calculateMessageTokens = (
   let tokens = tokensPerMessage
   for (const [key, value] of Object.entries(message)) {
     if (typeof value === "string") {
-      tokens += encoder.encode(value).length
+      tokens += encodeText(encoder, value).length
     }
     if (key === "name") {
       tokens += tokensPerName
@@ -205,7 +208,7 @@ const calculateParameterTokens = (
     tokens += constants.enumInit
     for (const item of param.enum) {
       tokens += constants.enumItem
-      tokens += encoder.encode(String(item)).length
+      tokens += encodeText(encoder, String(item)).length
     }
   }
 
@@ -216,7 +219,7 @@ const calculateParameterTokens = (
 
   // Encode the main parameter line
   const line = `${paramName}:${paramType}:${paramDesc}`
-  tokens += encoder.encode(line).length
+  tokens += encodeText(encoder, line).length
 
   // Handle additional properties (excluding standard ones)
   const excludedKeys = new Set(["type", "description", "enum"])
@@ -227,7 +230,7 @@ const calculateParameterTokens = (
         typeof propertyValue === "string" ? propertyValue : (
           JSON.stringify(propertyValue)
         )
-      tokens += encoder.encode(`${propertyName}:${propertyText}`).length
+      tokens += encodeText(encoder, `${propertyName}:${propertyText}`).length
     }
   }
 
@@ -264,7 +267,7 @@ const calculateParametersTokens = (
     } else {
       const paramText =
         typeof value === "string" ? value : JSON.stringify(value)
-      tokens += encoder.encode(`${key}:${paramText}`).length
+      tokens += encodeText(encoder, `${key}:${paramText}`).length
     }
   }
 
@@ -287,7 +290,7 @@ const calculateToolTokens = (
     fDesc = fDesc.slice(0, -1)
   }
   const line = fName + ":" + fDesc
-  tokens += encoder.encode(line).length
+  tokens += encodeText(encoder, line).length
   if (
     typeof func.parameters === "object" // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     && func.parameters !== null

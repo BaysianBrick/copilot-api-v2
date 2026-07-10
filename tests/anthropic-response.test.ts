@@ -8,7 +8,10 @@ import type {
 
 import { type AnthropicStreamState } from "~/routes/messages/anthropic-types"
 import { translateToAnthropic } from "~/routes/messages/non-stream-translation"
-import { translateChunkToAnthropicEvents } from "~/routes/messages/stream-translation"
+import {
+  translateChunkToAnthropicEvents,
+  translateErrorToAnthropicErrorEvent,
+} from "~/routes/messages/stream-translation"
 
 const anthropicUsageSchema = z.object({
   input_tokens: z.number().int(),
@@ -192,6 +195,16 @@ describe("OpenAI to Anthropic Non-Streaming Response Translation", () => {
 })
 
 describe("OpenAI to Anthropic Streaming Response Translation", () => {
+  test("should translate a streaming failure into an Anthropic error event", () => {
+    expect(translateErrorToAnthropicErrorEvent()).toEqual({
+      type: "error",
+      error: {
+        type: "api_error",
+        message: "An unexpected error occurred during streaming.",
+      },
+    })
+  })
+
   test("should translate a simple text stream correctly", () => {
     const openAIStream: Array<ChatCompletionChunk> = [
       {

@@ -138,6 +138,16 @@ describe("chatToResponsesPayload", () => {
       }).reasoning,
     ).toEqual({ effort: "none" })
   })
+
+  test("preserves the parallel tool-call setting", () => {
+    const out = chatToResponsesPayload({
+      model: "gpt-5.6-sol",
+      messages: [{ role: "user", content: "hi" }],
+      parallel_tool_calls: false,
+    })
+
+    expect(out.parallel_tool_calls).toBe(false)
+  })
 })
 
 describe("responsesResultToChat", () => {

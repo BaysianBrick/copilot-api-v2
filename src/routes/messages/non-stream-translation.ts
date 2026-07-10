@@ -77,6 +77,9 @@ export function translateToOpenAI(
     user: payload.metadata?.user_id,
     tools: translateAnthropicToolsToOpenAI(payload.tools),
     tool_choice: translateAnthropicToolChoiceToOpenAI(payload.tool_choice),
+    ...(payload.tool_choice?.disable_parallel_tool_use !== undefined && {
+      parallel_tool_calls: !payload.tool_choice.disable_parallel_tool_use,
+    }),
     ...(effort && { reasoning_effort: effort }),
   }
 }
@@ -138,7 +141,7 @@ function handleUserMessage(message: AnthropicUserMessage): Array<Message> {
       newMessages.push({
         role: "tool",
         tool_call_id: block.tool_use_id,
-        content: mapContent(block.content),
+        content: mapToolResultContent(block),
       })
     }
 
@@ -156,6 +159,19 @@ function handleUserMessage(message: AnthropicUserMessage): Array<Message> {
   }
 
   return newMessages
+}
+
+function mapToolResultContent(
+  block: AnthropicToolResultBlock,
+): Message["content"] {
+  const content = mapContent(block.content ?? "")
+  if (!block.is_error) return content
+
+  const errorPrefix = "Tool execution failed:\n"
+  if (Array.isArray(content)) {
+    return [{ type: "text", text: errorPrefix }, ...content]
+  }
+  return `${errorPrefix}${content ?? ""}`
 }
 
 function handleAssistantMessage(

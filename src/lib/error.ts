@@ -12,6 +12,94 @@ export class HTTPError extends Error {
   }
 }
 
+interface UpstreamErrorBody {
+  error?: {
+    message?: unknown
+  }
+  message?: unknown
+}
+
+export function toAnthropicErrorPayload(status: number, errorText: string) {
+  return {
+    type: "error" as const,
+    error: {
+      type: mapHttpStatusToAnthropicErrorType(status),
+      message: getUpstreamErrorMessage(errorText, status),
+    },
+  }
+}
+
+function mapHttpStatusToAnthropicErrorType(status: number): string {
+  switch (status) {
+    case 400: {
+      return "invalid_request_error"
+    }
+    case 401: {
+      return "authentication_error"
+    }
+    case 403: {
+      return "permission_error"
+    }
+    case 404: {
+      return "not_found_error"
+    }
+    case 408:
+    case 504: {
+      return "timeout_error"
+    }
+    case 413: {
+      return "request_too_large"
+    }
+    case 429: {
+      return "rate_limit_error"
+    }
+    case 529: {
+      return "overloaded_error"
+    }
+    default: {
+      return "api_error"
+    }
+  }
+}
+
+function getUpstreamErrorMessage(errorText: string, status: number): string {
+  let body: UpstreamErrorBody
+  try {
+    body = JSON.parse(errorText) as UpstreamErrorBody
+  } catch {
+    return errorText || `Request failed with status ${status}.`
+  }
+
+  const message = body.error?.message ?? body.message
+  if (typeof message === "string") return message
+
+  return errorText || `Request failed with status ${status}.`
+}
+
+export async function forwardAnthropicError(c: Context, error: unknown) {
+  if (error instanceof HTTPError) {
+    const errorText = await error.response.text()
+    const status = error.response.status
+    consola.error("HTTP error:", errorText)
+    return c.json(
+      toAnthropicErrorPayload(status, errorText),
+      status as ContentfulStatusCode,
+    )
+  }
+
+  consola.error("Error occurred:", error)
+  return c.json(
+    {
+      type: "error",
+      error: {
+        type: "api_error",
+        message: (error as Error).message,
+      },
+    },
+    500,
+  )
+}
+
 export async function forwardError(c: Context, error: unknown) {
   consola.error("Error occurred:", error)
 

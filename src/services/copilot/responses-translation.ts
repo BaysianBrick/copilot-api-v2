@@ -160,6 +160,9 @@ export function chatToResponsesPayload(
     responsesPayload.tools = tools
     responsesPayload.tool_choice = translateToolChoice(payload.tool_choice)
   }
+  if (payload.parallel_tool_calls !== undefined) {
+    responsesPayload.parallel_tool_calls = payload.parallel_tool_calls
+  }
   if (effort) {
     responsesPayload.reasoning = { effort }
   }
