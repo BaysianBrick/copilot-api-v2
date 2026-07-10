@@ -62,6 +62,38 @@ function isValidChatCompletionRequest(payload: unknown): boolean {
   return result.success
 }
 
+const compatibilityModels = [
+  "gpt-5.6-sol",
+  "claude-opus-4.8",
+  "claude-sonnet-5",
+] as const
+
+describe("Claude model name normalization", () => {
+  test("should normalize official Claude model IDs to Copilot IDs", () => {
+    const modelCases = [
+      ["claude-opus-4-8", "claude-opus-4.8"],
+      ["claude-opus-4-8-20260701", "claude-opus-4.8"],
+      ["claude-opus-4-8[1m]", "claude-opus-4.8[1m]"],
+      ["claude-sonnet-4-6", "claude-sonnet-4.6"],
+      ["claude-sonnet-5-20260701", "claude-sonnet-5"],
+      ["claude-haiku-4-5", "claude-haiku-4.5"],
+      ["claude-opus-4.8", "claude-opus-4.8"],
+      ["claude-sonnet-5", "claude-sonnet-5"],
+      ["other-model-20260701", "other-model-20260701"],
+    ] as const
+
+    for (const [model, expectedModel] of modelCases) {
+      const openAIPayload = translateToOpenAI({
+        model,
+        messages: [{ role: "user", content: "Hello!" }],
+        max_tokens: 16,
+      })
+
+      expect(openAIPayload.model).toBe(expectedModel)
+    }
+  })
+})
+
 describe("Anthropic to OpenAI translation logic", () => {
   test("should translate minimal Anthropic payload to valid OpenAI payload", () => {
     const anthropicPayload: AnthropicMessagesPayload = {
@@ -199,60 +231,64 @@ describe("Anthropic to OpenAI translation logic", () => {
   })
 
   test("should preserve tool result errors for the Copilot tool message", () => {
-    const anthropicPayload: AnthropicMessagesPayload = {
-      model: "gpt-5.6-sol",
-      messages: [
-        { role: "user", content: "Read the configuration." },
-        {
-          role: "assistant",
-          content: [
-            {
-              type: "tool_use",
-              id: "call_read_config",
-              name: "read_file",
-              input: { path: "config.json" },
-            },
-          ],
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: "call_read_config",
-              content: "Access denied.",
-              is_error: true,
-            },
-          ],
-        },
-      ],
-      max_tokens: 100,
+    for (const model of compatibilityModels) {
+      const anthropicPayload: AnthropicMessagesPayload = {
+        model,
+        messages: [
+          { role: "user", content: "Read the configuration." },
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: "call_read_config",
+                name: "read_file",
+                input: { path: "config.json" },
+              },
+            ],
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: "call_read_config",
+                content: "Access denied.",
+                is_error: true,
+              },
+            ],
+          },
+        ],
+        max_tokens: 100,
+      }
+
+      const openAIPayload = translateToOpenAI(anthropicPayload)
+      const toolMessage = openAIPayload.messages.find(
+        (message) => message.role === "tool",
+      )
+
+      expect(toolMessage).toMatchObject({
+        role: "tool",
+        tool_call_id: "call_read_config",
+        content: "Tool execution failed:\nAccess denied.",
+      })
     }
-
-    const openAIPayload = translateToOpenAI(anthropicPayload)
-    const toolMessage = openAIPayload.messages.find(
-      (message) => message.role === "tool",
-    )
-
-    expect(toolMessage).toMatchObject({
-      role: "tool",
-      tool_call_id: "call_read_config",
-      content: "Tool execution failed:\nAccess denied.",
-    })
   })
 
   test("should disable parallel tool calls when requested", () => {
-    const openAIPayload = translateToOpenAI({
-      model: "gpt-5.6-sol",
-      messages: [{ role: "user", content: "Read the configuration." }],
-      max_tokens: 100,
-      tool_choice: {
-        type: "auto",
-        disable_parallel_tool_use: true,
-      },
-    })
+    for (const model of compatibilityModels) {
+      const openAIPayload = translateToOpenAI({
+        model,
+        messages: [{ role: "user", content: "Read the configuration." }],
+        max_tokens: 100,
+        tool_choice: {
+          type: "auto",
+          disable_parallel_tool_use: true,
+        },
+      })
 
-    expect(openAIPayload.parallel_tool_calls).toBe(false)
+      expect(openAIPayload.parallel_tool_calls).toBe(false)
+    }
   })
 })
 

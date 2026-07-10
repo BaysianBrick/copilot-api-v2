@@ -85,13 +85,19 @@ export function translateToOpenAI(
 }
 
 function translateModelName(model: string): string {
-  // Subagent requests use a specific model number which Copilot doesn't support
-  if (model.startsWith("claude-sonnet-4-")) {
-    return model.replace(/^claude-sonnet-4-.*/, "claude-sonnet-4")
-  } else if (model.startsWith("claude-opus-")) {
-    return model.replace(/^claude-opus-4-.*/, "claude-opus-4")
-  }
-  return model
+  const directiveStart = model.indexOf("[")
+  const baseModel =
+    directiveStart === -1 ? model : model.slice(0, directiveStart)
+  const directives = directiveStart === -1 ? "" : model.slice(directiveStart)
+  if (!baseModel.startsWith("claude-")) return model
+
+  const withoutDate = baseModel.replace(/-\d{8}$/, "")
+  const hyphenatedVersion = withoutDate.match(
+    /^(claude-(?:haiku|opus|sonnet)-\d+)-(\d+)$/,
+  )
+
+  if (!hyphenatedVersion) return `${withoutDate}${directives}`
+  return `${hyphenatedVersion[1]}.${hyphenatedVersion[2]}${directives}`
 }
 
 function translateAnthropicMessagesToOpenAI(
