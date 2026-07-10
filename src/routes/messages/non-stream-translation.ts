@@ -13,6 +13,7 @@ import {
 import {
   type AnthropicAssistantContentBlock,
   type AnthropicAssistantMessage,
+  type AnthropicEffort,
   type AnthropicMessage,
   type AnthropicMessagesPayload,
   type AnthropicResponse,
@@ -28,41 +29,63 @@ import { mapOpenAIStopReasonToAnthropic } from "./utils"
 
 // Payload translation
 
-// Effort levels the Copilot backend accepts for reasoning-effort models. Claude
-// Code strips any model-name effort suffix before sending, and the Anthropic
-// wire format has no `reasoning_effort` field, so a Claude Code request cannot
-// raise a model above its default effort on its own. When
-// COPILOT_API_ANTHROPIC_EFFORT is set (e.g. "xhigh") we inject it here so the
-// effort actually reaches the backend. Invalid values are ignored (warned)
-// rather than breaking every request.
-const REASONING_EFFORT_VALUES = new Set([
+const REASONING_EFFORT_VALUES = new Set<AnthropicEffort>([
+  "none",
   "low",
   "medium",
   "high",
   "xhigh",
   "max",
 ])
+const DEFAULT_ANTHROPIC_EFFORT: AnthropicEffort = "high"
 
 function supportsInjectedEffort(model: string): boolean {
-  return model.startsWith("claude") || model.startsWith("gpt-5")
+  return (
+    model.startsWith("claude")
+    || model.startsWith("gemini-3")
+    || model.startsWith("gpt-5")
+  )
 }
 
-function resolveAnthropicEffort(model: string): string | undefined {
-  if (!supportsInjectedEffort(model)) return undefined
-  const raw = process.env.COPILOT_API_ANTHROPIC_EFFORT?.trim().toLowerCase()
+function normalizeAnthropicEffort(
+  raw: unknown,
+  source: string,
+): AnthropicEffort | undefined {
   if (!raw) return undefined
-  if (REASONING_EFFORT_VALUES.has(raw)) return raw
+  const value = typeof raw === "string" ? raw.trim().toLowerCase() : ""
+  if (REASONING_EFFORT_VALUES.has(value as AnthropicEffort)) {
+    return value as AnthropicEffort
+  }
+  const displayedValue = typeof raw === "string" ? raw : JSON.stringify(raw)
   consola.warn(
-    `Ignoring invalid COPILOT_API_ANTHROPIC_EFFORT="${raw}"; expected one of ${[...REASONING_EFFORT_VALUES].join(", ")}`,
+    `Ignoring invalid ${source}="${displayedValue}"; expected one of ${[...REASONING_EFFORT_VALUES].join(", ")}`,
   )
   return undefined
+}
+
+function resolveAnthropicEffort(
+  model: string,
+  requestedEffort: unknown,
+): AnthropicEffort | undefined {
+  if (!supportsInjectedEffort(model)) return undefined
+  const requestEffort = normalizeAnthropicEffort(
+    requestedEffort,
+    "output_config.effort",
+  )
+  if (requestEffort) return requestEffort
+  return (
+    normalizeAnthropicEffort(
+      process.env.COPILOT_API_ANTHROPIC_EFFORT,
+      "COPILOT_API_ANTHROPIC_EFFORT",
+    ) ?? DEFAULT_ANTHROPIC_EFFORT
+  )
 }
 
 export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
 ): ChatCompletionsPayload {
   const model = translateModelName(payload.model)
-  const effort = resolveAnthropicEffort(model)
+  const effort = resolveAnthropicEffort(model, payload.output_config?.effort)
   return {
     model,
     messages: translateAnthropicMessagesToOpenAI(

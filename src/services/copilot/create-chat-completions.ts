@@ -81,13 +81,20 @@ type ReasoningPayload = ChatCompletionsPayload & { thinking?: unknown }
 function stripIncompatibleReasoningParams(req: ChatCompletionsPayload): void {
   if (!req.model) return
   const modelLower = req.model.toLowerCase()
+  const selectedModel = state.models?.data.find(
+    (model) => model.id.toLowerCase() === modelLower,
+  )
+  const advertisedEfforts =
+    selectedModel?.capabilities.supports.reasoning_effort
   const isNonReasoning =
-    modelLower.includes("sonnet")
-    || modelLower.includes("flash")
-    || modelLower.includes("haiku")
-    || modelLower.includes("4o")
-    || modelLower.includes("gpt-4")
-    || modelLower.includes("claude-3")
+    selectedModel ?
+      !advertisedEfforts || advertisedEfforts.length === 0
+    : modelLower.includes("sonnet")
+      || modelLower.includes("flash")
+      || modelLower.includes("haiku")
+      || modelLower.includes("4o")
+      || modelLower.includes("gpt-4")
+      || modelLower.includes("claude-3")
   if (!isNonReasoning) return
 
   if (req.reasoning_effort !== undefined) {

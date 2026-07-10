@@ -66,6 +66,8 @@ const compatibilityModels = [
   "gpt-5.6-sol",
   "claude-opus-4.8",
   "claude-sonnet-5",
+  "gemini-3.5-flash",
+  "gemini-3.1-pro-preview",
 ] as const
 
 describe("Claude model name normalization", () => {
@@ -429,22 +431,67 @@ describe("COPILOT_API_ANTHROPIC_EFFORT injection", () => {
     expect(out.reasoning_effort).toBe("max")
   })
 
+  test("maps Claude Code output_config effort to reasoning_effort", () => {
+    const out = translateToOpenAI({
+      model: "gpt-5.6-sol",
+      messages: [{ role: "user", content: "Hello!" }],
+      max_tokens: 16,
+      output_config: { effort: "high" },
+    })
+
+    expect(out.reasoning_effort).toBe("high")
+  })
+
+  test("prefers Claude Code request effort over the environment default", () => {
+    process.env[ENV_KEY] = "low"
+    const out = translateToOpenAI({
+      model: "gpt-5.6-sol",
+      messages: [{ role: "user", content: "Hello!" }],
+      max_tokens: 16,
+      output_config: { effort: "xhigh" },
+    })
+
+    expect(out.reasoning_effort).toBe("xhigh")
+  })
+
+  test("maps an explicit none effort instead of using the environment", () => {
+    process.env[ENV_KEY] = "high"
+    const out = translateToOpenAI({
+      model: "gpt-5.6-sol",
+      messages: [{ role: "user", content: "Hello!" }],
+      max_tokens: 16,
+      output_config: { effort: "none" },
+    })
+
+    expect(out.reasoning_effort).toBe("none")
+  })
+
   test("normalizes case/whitespace of the effort value", () => {
     process.env[ENV_KEY] = "  XHigh "
     const out = translateToOpenAI(claudePayload)
     expect(out.reasoning_effort).toBe("xhigh")
   })
 
-  test("omits reasoning_effort when env is unset", () => {
+  test("defaults reasoning_effort to high when env is unset", () => {
     delete process.env.COPILOT_API_ANTHROPIC_EFFORT
     const out = translateToOpenAI(claudePayload)
-    expect(out.reasoning_effort).toBeUndefined()
+    expect(out.reasoning_effort).toBe("high")
   })
 
-  test("ignores invalid effort values instead of breaking the request", () => {
+  test("defaults reasoning_effort to high for Gemini 3 models", () => {
+    delete process.env.COPILOT_API_ANTHROPIC_EFFORT
+    const out = translateToOpenAI({
+      model: "gemini-3.1-pro-preview",
+      messages: [{ role: "user", content: "Hello!" }],
+      max_tokens: 16,
+    })
+    expect(out.reasoning_effort).toBe("high")
+  })
+
+  test("uses the high default when the environment value is invalid", () => {
     process.env[ENV_KEY] = "bogus_xyz"
     const out = translateToOpenAI(claudePayload)
-    expect(out.reasoning_effort).toBeUndefined()
+    expect(out.reasoning_effort).toBe("high")
   })
 
   test("injects reasoning_effort for GPT-5 models when env is set", () => {

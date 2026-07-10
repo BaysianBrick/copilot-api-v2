@@ -28,34 +28,39 @@ For Claude Code, keep the context suffix clean and carry effort separately:
   "env": {
     "ANTHROPIC_BASE_URL": "http://localhost:4141",
     "ANTHROPIC_AUTH_TOKEN": "dummy",
-    "ANTHROPIC_MODEL": "gpt-5.5[1m]",
-    "CLAUDE_CODE_EFFORT_LEVEL": "xhigh"
-  }
+    "ANTHROPIC_MODEL": "gpt-5.5[1m]"
+  },
+  "effortLevel": "xhigh"
 }
 ```
 
-Then start the proxy with:
+Claude Code sends that value as `output_config.effort`; the proxy maps it to
+Copilot `reasoning_effort`. The command-line and interactive equivalents are
+`claude --effort xhigh` and `/effort xhigh`.
+
+You can optionally start the proxy with a global fallback:
 
 ```sh
 COPILOT_API_ANTHROPIC_EFFORT=xhigh copilot-api start
 ```
 
-`CLAUDE_CODE_EFFORT_LEVEL` keeps the client UI/session intent aligned. The
-`COPILOT_API_ANTHROPIC_EFFORT` variable is what makes the effort reach the
-GitHub Copilot backend from the Anthropic `/v1/messages` path.
+An explicit Claude Code request effort takes precedence over
+`COPILOT_API_ANTHROPIC_EFFORT`. If neither is present, the proxy uses its
+built-in `high` default.
 
-## Claude Code Needs Effort Injection
+## Claude Code Effort Mapping
 
 Claude Code talks to this proxy through the Anthropic-compatible `/v1/messages`
-endpoint. The Anthropic request shape has no `reasoning_effort` field, and some
-clients strip model-name effort suffixes before sending requests. Without proxy
-support, the backend may receive the model but not the requested effort level.
+endpoint. It expresses effort as `output_config.effort`, while the Copilot
+backend expects `reasoning_effort`. Some clients also strip model-name effort
+suffixes before sending requests, so relying on a suffix is not portable.
 
-This proxy handles that by injecting `reasoning_effort` after translating the
-Anthropic request into an OpenAI-style payload. The injection is controlled by
-`COPILOT_API_ANTHROPIC_EFFORT` and currently applies only to models known to
-support reasoning effort (`claude*` and `gpt-5*`). Invalid effort values are
-warned and ignored so a typo does not break every request.
+This proxy maps per-request `output_config.effort` to `reasoning_effort` after
+translating the Anthropic request into an OpenAI-style payload. The optional
+`COPILOT_API_ANTHROPIC_EFFORT` value is used only when the request omits effort.
+Mapping currently applies only to models known to support reasoning effort
+(`claude*`, `gemini-3*`, and `gpt-5*`). Invalid values are warned and ignored so
+a typo does not break every request; the proxy falls back to `high`.
 
 Recommended values are:
 
@@ -64,6 +69,9 @@ Recommended values are:
 - `high`
 - `xhigh`
 - `max`
+
+The proxy also accepts `none` when a caller needs to explicitly disable extra
+reasoning.
 
 Use `xhigh` for GPT-5-family models unless you have verified that the upstream
 model accepts a different value through the exact route you are using.

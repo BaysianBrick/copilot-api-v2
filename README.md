@@ -235,11 +235,13 @@ stripped before the request reaches GitHub.
   aliases `max` (→ `xhigh`) and `minimal` (→ `low`) are normalised to the nearest
   value the GPT-5 family accepts. An explicit `reasoning_effort` in the request
   body always takes precedence over the suffix.
-- **Claude Code effort injection** is controlled by
-  `COPILOT_API_ANTHROPIC_EFFORT` for the Anthropic-compatible `/v1/messages`
-  path. Keep client-side context suffixes clean (for example `gpt-5.5[1m]`) and
-  pass effort through the environment (for example
-  `COPILOT_API_ANTHROPIC_EFFORT=xhigh`) instead of relying on a combined suffix.
+- **Claude Code effort** set through `effortLevel`, `--effort`, or `/effort` is
+  sent as `output_config.effort` and mapped to Copilot `reasoning_effort` on the
+  Anthropic-compatible `/v1/messages` path. Keep client-side context suffixes
+  clean (for example `gpt-5.5[1m]`). `COPILOT_API_ANTHROPIC_EFFORT` remains an
+  optional global fallback when a request does not specify effort. Precedence
+  is request effort, then the proxy environment fallback, then the built-in
+  `high` default.
 - **GPT-5 routing** is automatic: if `/chat/completions` rejects a model with
   `unsupported_api_for_model`, the proxy transparently retries it over the
   `/responses` endpoint and remembers the choice for subsequent requests.

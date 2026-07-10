@@ -1,5 +1,13 @@
 // Anthropic API Types
 
+export type AnthropicEffort =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+
 export interface AnthropicMessagesPayload {
   model: string
   messages: Array<AnthropicMessage>
@@ -22,6 +30,9 @@ export interface AnthropicMessagesPayload {
   thinking?: {
     type: "enabled"
     budget_tokens?: number
+  }
+  output_config?: {
+    effort?: AnthropicEffort
   }
   service_tier?: "auto" | "standard_only"
 }
