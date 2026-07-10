@@ -29,6 +29,58 @@ export function toAnthropicErrorPayload(status: number, errorText: string) {
   }
 }
 
+export function toOpenAIErrorPayload(status: number, errorText: string) {
+  let upstream: {
+    error?: {
+      code?: unknown
+      message?: unknown
+      param?: unknown
+      type?: unknown
+    }
+  } = {}
+  try {
+    upstream = JSON.parse(errorText) as typeof upstream
+  } catch {
+    // Plain-text upstream errors are normalized below.
+  }
+
+  const error = upstream.error
+  return {
+    error: {
+      message: getUpstreamErrorMessage(errorText, status),
+      type:
+        typeof error?.type === "string" ?
+          error.type
+        : mapHttpStatusToOpenAIErrorType(status),
+      ...(typeof error?.code === "string" && { code: error.code }),
+      ...(typeof error?.param === "string" && { param: error.param }),
+    },
+  }
+}
+
+function mapHttpStatusToOpenAIErrorType(status: number): string {
+  switch (status) {
+    case 400:
+    case 404:
+    case 409:
+    case 422: {
+      return "invalid_request_error"
+    }
+    case 401: {
+      return "authentication_error"
+    }
+    case 403: {
+      return "permission_error"
+    }
+    case 429: {
+      return "rate_limit_error"
+    }
+    default: {
+      return "api_error"
+    }
+  }
+}
+
 function mapHttpStatusToAnthropicErrorType(status: number): string {
   switch (status) {
     case 400: {
@@ -94,6 +146,29 @@ export async function forwardAnthropicError(c: Context, error: unknown) {
       error: {
         type: "api_error",
         message: (error as Error).message,
+      },
+    },
+    500,
+  )
+}
+
+export async function forwardOpenAIError(c: Context, error: unknown) {
+  if (error instanceof HTTPError) {
+    const errorText = await error.response.text()
+    const status = error.response.status
+    consola.error("HTTP error:", errorText)
+    return c.json(
+      toOpenAIErrorPayload(status, errorText),
+      status as ContentfulStatusCode,
+    )
+  }
+
+  consola.error("Error occurred:", error)
+  return c.json(
+    {
+      error: {
+        message: (error as Error).message,
+        type: "api_error",
       },
     },
     500,

@@ -101,14 +101,14 @@ describe("chatToResponsesPayload", () => {
     expect(out.tool_choice).toBe("auto")
   })
 
-  test("maps the 'max' effort alias to xhigh and drops unknown efforts", () => {
+  test("preserves max as a distinct effort and drops unknown efforts", () => {
     expect(
       chatToResponsesPayload({
         model: "gpt-5.5",
         messages: [{ role: "user", content: "hi" }],
         reasoning_effort: "max",
       }).reasoning,
-    ).toEqual({ effort: "xhigh" })
+    ).toEqual({ effort: "max" })
 
     expect(
       chatToResponsesPayload({

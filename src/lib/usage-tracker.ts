@@ -21,6 +21,31 @@ export interface RawUsage {
   prompt_tokens_details?: { cached_tokens?: number }
 }
 
+interface ResponsesRawUsage {
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  input_tokens_details?: { cached_tokens?: number }
+}
+
+export function normalizeResponsesUsage(
+  usage: ResponsesRawUsage | null | undefined,
+): RawUsage | undefined {
+  if (!usage) return undefined
+  return {
+    prompt_tokens: usage.input_tokens ?? 0,
+    completion_tokens: usage.output_tokens ?? 0,
+    total_tokens:
+      usage.total_tokens
+      ?? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
+    ...(usage.input_tokens_details?.cached_tokens !== undefined && {
+      prompt_tokens_details: {
+        cached_tokens: usage.input_tokens_details.cached_tokens,
+      },
+    }),
+  }
+}
+
 export interface UsageRecord {
   ts: string
   model: string
@@ -78,8 +103,11 @@ function usageFromStreamItem(item: { data?: string }): RawUsage | undefined {
   const data = item.data
   if (typeof data !== "string" || data === "[DONE]") return undefined
   try {
-    const chunk = JSON.parse(data) as { usage?: RawUsage }
-    return chunk.usage
+    const chunk = JSON.parse(data) as {
+      usage?: RawUsage
+      response?: { usage?: ResponsesRawUsage | null }
+    }
+    return chunk.usage ?? normalizeResponsesUsage(chunk.response?.usage)
   } catch {
     // Non-JSON keep-alive lines are ignored.
     return undefined

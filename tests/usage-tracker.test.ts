@@ -7,6 +7,7 @@ import type { UsageRecord } from "../src/lib/usage-tracker"
 
 import {
   recordUsage,
+  normalizeResponsesUsage,
   summarizeUsage,
   trackStreamUsage,
 } from "../src/lib/usage-tracker"
@@ -85,6 +86,24 @@ describe("recordUsage", () => {
       threw = true
     }
     expect(threw).toBe(false)
+  })
+})
+
+describe("normalizeResponsesUsage", () => {
+  test("maps Responses token names to the usage log format", () => {
+    expect(
+      normalizeResponsesUsage({
+        input_tokens: 100,
+        output_tokens: 20,
+        total_tokens: 120,
+        input_tokens_details: { cached_tokens: 80 },
+      }),
+    ).toEqual({
+      prompt_tokens: 100,
+      completion_tokens: 20,
+      total_tokens: 120,
+      prompt_tokens_details: { cached_tokens: 80 },
+    })
   })
 })
 
@@ -171,6 +190,43 @@ describe("summarizeUsage", () => {
 })
 
 describe("trackStreamUsage", () => {
+  test("records usage nested in a Responses completed event", async () => {
+    const log = tmpLog()
+    const items = [
+      {
+        data: JSON.stringify({
+          type: "response.output_text.delta",
+          delta: "Hi",
+        }),
+      },
+      {
+        data: JSON.stringify({
+          type: "response.completed",
+          response: {
+            usage: {
+              input_tokens: 30,
+              output_tokens: 7,
+              total_tokens: 37,
+              input_tokens_details: { cached_tokens: 20 },
+            },
+          },
+        }),
+      },
+    ]
+
+    for await (const item of trackStreamUsage(
+      { model: "gpt-5.6-sol", via: "responses" },
+      fakeStream(items),
+      log,
+    )) {
+      expect(item).toBeDefined()
+    }
+
+    const summary = await summarizeUsage({}, log)
+    expect(summary.by_model["gpt-5.6-sol"].total_tokens).toBe(37)
+    expect(summary.by_model["gpt-5.6-sol"].cached_tokens).toBe(20)
+  })
+
   test("yields items unchanged and records the terminal usage chunk", async () => {
     const log = tmpLog()
     const items = [
