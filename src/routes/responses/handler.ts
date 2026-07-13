@@ -14,6 +14,8 @@ import {
 } from "~/lib/usage-tracker"
 import {
   createResponses,
+  normalizeResponsesInput,
+  type NormalizedResponsesPayload,
   type ResponsesPayload,
   type ResponsesResult,
 } from "~/services/copilot/create-responses"
@@ -55,19 +57,20 @@ export async function handleResponse(c: Context) {
 
 export function normalizeResponsesPayload(
   payload: ResponsesPayload,
-): ResponsesPayload {
-  const spec = parseModelSpec(payload.model)
-  if (!spec.effort || payload.reasoning?.effort) {
-    return spec.model === payload.model ?
-        payload
-      : { ...payload, model: spec.model }
+): NormalizedResponsesPayload {
+  const normalizedPayload = normalizeResponsesInput(payload)
+  const spec = parseModelSpec(normalizedPayload.model)
+  if (!spec.effort || normalizedPayload.reasoning?.effort) {
+    return spec.model === normalizedPayload.model ?
+        normalizedPayload
+      : { ...normalizedPayload, model: spec.model }
   }
 
   return {
-    ...payload,
+    ...normalizedPayload,
     model: spec.model,
     reasoning: {
-      ...payload.reasoning,
+      ...normalizedPayload.reasoning,
       effort: normalizeResponsesEffort(spec.effort),
     },
   }
