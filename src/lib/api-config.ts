@@ -64,6 +64,11 @@ export function filterClientHeaders(
   const forwarded: Record<string, string> = {}
   for (const [key, value] of Object.entries(clientHeaders)) {
     const lk = key.toLowerCase()
+    if (lk === "session-id") {
+      forwarded[key] = value
+      forwarded["copilot-session-id"] = value
+      continue
+    }
     if (
       (lk.startsWith("copilot-")
         || lk.startsWith("x-copilot-")

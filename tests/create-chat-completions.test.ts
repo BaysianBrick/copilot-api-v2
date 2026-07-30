@@ -54,7 +54,7 @@ test("sets X-Initiator to user if only user present", async () => {
   expect(headers["X-Initiator"]).toBe("user")
 })
 
-test("filters and forwards client-supplied copilot/vscode/github headers", async () => {
+test("filters and forwards client-supplied session headers", async () => {
   const payload: ChatCompletionsPayload = {
     messages: [{ role: "user", content: "hi" }],
     model: "gpt-test",
@@ -63,6 +63,7 @@ test("filters and forwards client-supplied copilot/vscode/github headers", async
     host: "localhost:4141",
     authorization: "Bearer dummy",
     "content-length": "123",
+    "session-id": "codex-thread-12345",
     "copilot-edits-session": "session-12345",
     "x-copilot-test-header": "test-val",
     "x-vscode-something": "vscode-val",
@@ -79,6 +80,8 @@ test("filters and forwards client-supplied copilot/vscode/github headers", async
   const headers = latestCall[1].headers
 
   // Should forward custom headers
+  expect(headers["session-id"]).toBe("codex-thread-12345")
+  expect(headers["copilot-session-id"]).toBe("codex-thread-12345")
   expect(headers["copilot-edits-session"]).toBe("session-12345")
   expect(headers["x-copilot-test-header"]).toBe("test-val")
   expect(headers["x-vscode-something"]).toBe("vscode-val")
