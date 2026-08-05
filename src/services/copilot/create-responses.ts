@@ -171,17 +171,21 @@ export function adaptResponsesPayloadForCopilot(
   payload: ResponsesPayload,
 ): NormalizedResponsesPayload {
   const normalizedPayload = normalizeResponsesInput(payload)
-  const historyCompatibleInput = stripConsumedAgentEncryption(
-    normalizedPayload.input,
-  )
-  const [input, changed] = adaptNestedValue(historyCompatibleInput)
+  const [input, changed] = adaptNestedValue(normalizedPayload.input)
   if (changed) {
     return { ...normalizedPayload, input: input as Array<ResponsesInputItem> }
   }
-  if (historyCompatibleInput === normalizedPayload.input) {
-    return normalizedPayload
-  }
-  return { ...normalizedPayload, input: historyCompatibleInput }
+  return normalizedPayload
+}
+
+export function adaptStaleAgentHistoryForCopilot(
+  payload: ResponsesPayload,
+): NormalizedResponsesPayload {
+  const adaptedPayload = adaptResponsesPayloadForCopilot(payload)
+  const compatibleInput = stripConsumedAgentEncryption(adaptedPayload.input)
+  return compatibleInput === adaptedPayload.input ?
+      adaptedPayload
+    : { ...adaptedPayload, input: compatibleInput }
 }
 
 function stripConsumedAgentEncryption(
@@ -216,7 +220,9 @@ function stripConsumedAgentEncryption(
 }
 
 function isModelOutput(item: Record<string, unknown>): boolean {
-  if (item.type === "message") return item.role === "assistant"
+  if (item.type === "message") {
+    return item.role === "assistant" && !isInterAgentInstructionMessage(item)
+  }
   return [
     "compaction",
     "context_compaction",
@@ -228,6 +234,43 @@ function isModelOutput(item: Record<string, unknown>): boolean {
     "tool_search_call",
     "web_search_call",
   ].includes(String(item.type))
+}
+
+function isInterAgentInstructionMessage(
+  item: Record<string, unknown>,
+): boolean {
+  if (!Array.isArray(item.content) || item.content.length !== 1) return false
+  const part: unknown = item.content[0]
+  if (!part || typeof part !== "object") return false
+  const contentPart = part as Record<string, unknown>
+  if (
+    !["input_text", "output_text"].includes(String(contentPart.type))
+    || typeof contentPart.text !== "string"
+  ) {
+    return false
+  }
+
+  try {
+    const record = JSON.parse(contentPart.text) as Record<
+      string,
+      unknown
+    > | null
+    if (!record || typeof record !== "object") return false
+    const otherRecipients = record.other_recipients
+    return (
+      typeof record.author === "string"
+      && typeof record.recipient === "string"
+      && (otherRecipients === undefined
+        || (Array.isArray(otherRecipients)
+          && otherRecipients.every(
+            (recipient) => typeof recipient === "string",
+          )))
+      && typeof record.content === "string"
+      && typeof record.trigger_turn === "boolean"
+    )
+  } catch {
+    return false
+  }
 }
 
 function adaptNestedValue(value: unknown): [unknown, boolean] {
@@ -285,9 +328,124 @@ export interface ResponsesResult {
   copilot_usage?: CopilotUsage
 }
 
-interface ResponsesStreamItem {
+export interface ResponsesStreamItem {
   data?: string
   event?: string
+}
+
+const MAX_PRE_OUTPUT_BUFFER_ITEMS = 32
+const MAX_PRE_OUTPUT_BUFFER_CHARS = 65_536
+
+export async function* recoverStaleAgentHistoryStream(
+  stream: AsyncIterable<ResponsesStreamItem>,
+  retry: () => Promise<AsyncIterable<ResponsesStreamItem>>,
+): AsyncGenerator<ResponsesStreamItem> {
+  const bufferedItems: Array<ResponsesStreamItem> = []
+  let bufferedChars = 0
+  let outputExposed = false
+
+  for await (const item of stream) {
+    if (outputExposed) {
+      yield item
+      continue
+    }
+    const parsed = parseStreamData(item.data)
+    if (isRecoverableStaleAgentFailure(parsed)) {
+      consola.warn(
+        "Retrying Responses without consumed agent encryption:",
+        JSON.stringify({ failed_response_id: responseId(parsed) }),
+      )
+      const retryStream = await retry()
+      for await (const retryItem of retryStream) yield retryItem
+      return
+    }
+    if (shouldBufferPreOutputItem(item, parsed)) {
+      const itemChars = streamItemChars(item)
+      if (wouldExceedPreOutputBuffer(bufferedItems, bufferedChars, itemChars)) {
+        for (const bufferedItem of bufferedItems) yield bufferedItem
+        bufferedItems.length = 0
+        yield item
+        outputExposed = true
+        continue
+      }
+      bufferedItems.push(item)
+      bufferedChars += itemChars
+      continue
+    }
+
+    for (const bufferedItem of bufferedItems) yield bufferedItem
+    bufferedItems.length = 0
+    bufferedChars = 0
+    yield item
+    outputExposed = true
+  }
+
+  for (const bufferedItem of bufferedItems) yield bufferedItem
+}
+
+function shouldBufferPreOutputItem(
+  item: ResponsesStreamItem,
+  parsed: unknown,
+): boolean {
+  return !item.data || parsed === undefined || isPreOutputEvent(parsed)
+}
+
+function streamItemChars(item: ResponsesStreamItem): number {
+  return (item.data?.length ?? 0) + (item.event?.length ?? 0)
+}
+
+function wouldExceedPreOutputBuffer(
+  bufferedItems: Array<ResponsesStreamItem>,
+  bufferedChars: number,
+  itemChars: number,
+): boolean {
+  return (
+    bufferedItems.length >= MAX_PRE_OUTPUT_BUFFER_ITEMS
+    || bufferedChars + itemChars > MAX_PRE_OUTPUT_BUFFER_CHARS
+  )
+}
+
+function parseStreamData(data: string | undefined): unknown {
+  if (!data || data === "[DONE]") return undefined
+  try {
+    return JSON.parse(data) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function isPreOutputEvent(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  const type = (value as Record<string, unknown>).type
+  return [
+    "response.created",
+    "response.in_progress",
+    "response.metadata",
+    "response.queued",
+  ].includes(String(type))
+}
+
+function responseId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null
+  const response = (value as Record<string, unknown>).response
+  if (!response || typeof response !== "object") return null
+  const id = (response as Record<string, unknown>).id
+  return typeof id === "string" ? id.slice(0, 80) : null
+}
+
+function isRecoverableStaleAgentFailure(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  const event = value as Record<string, unknown>
+  if (event.type !== "response.failed") return false
+  const response = event.response
+  if (!response || typeof response !== "object") return false
+  const details = response as Record<string, unknown>
+  return (
+    details.status === "failed"
+    && details.error === null
+    && Array.isArray(details.output)
+    && details.output.length === 0
+  )
 }
 
 async function* restoreCodexCollaborationStream(
@@ -377,6 +535,7 @@ export const createResponses = async (
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
   const upstreamPayload = adaptResponsesPayloadForCopilot(payload)
+  const recoveryPayload = adaptStaleAgentHistoryForCopilot(upstreamPayload)
 
   const enableVision = upstreamPayload.input.some(
     (item) =>
@@ -399,24 +558,52 @@ export const createResponses = async (
     ...filterClientHeaders(clientHeaders),
   }
 
+  const request = (requestPayload: NormalizedResponsesPayload) =>
+    fetchResponses(requestPayload, headers)
+  const response = await request(upstreamPayload)
+
+  if (payload.stream) {
+    const stream = events(response)
+    const recoveredStream =
+      recoveryPayload === upstreamPayload ? stream : (
+        recoverStaleAgentHistoryStream(stream, async () =>
+          events(await request(recoveryPayload)),
+        )
+      )
+    return restoreCodexCollaborationStream(recoveredStream)
+  }
+
+  const result = (await response.json()) as ResponsesResult
+  if (
+    recoveryPayload !== upstreamPayload
+    && isRecoverableStaleAgentFailure({
+      type: "response.failed",
+      response: result,
+    })
+  ) {
+    consola.warn("Retrying Responses without consumed agent encryption")
+    const retryResponse = await request(recoveryPayload)
+    return restoreCodexCollaborationToolNames(
+      (await retryResponse.json()) as ResponsesResult,
+    )
+  }
+  return restoreCodexCollaborationToolNames(result)
+}
+
+async function fetchResponses(
+  payload: NormalizedResponsesPayload,
+  headers: Record<string, string>,
+): Promise<Response> {
   const response = await fetch(`${copilotBaseUrl(state)}/responses`, {
     method: "POST",
     headers,
-    body: JSON.stringify(upstreamPayload),
+    body: JSON.stringify(payload),
   })
-
   if (!response.ok) {
     consola.error("Failed to create responses", response)
     throw new HTTPError("Failed to create responses", response)
   }
-
-  if (payload.stream) {
-    return restoreCodexCollaborationStream(events(response))
-  }
-
-  return restoreCodexCollaborationToolNames(
-    (await response.json()) as ResponsesResult,
-  )
+  return response
 }
 
 // ---- Streaming event types ----

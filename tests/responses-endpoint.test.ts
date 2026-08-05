@@ -5,8 +5,11 @@ import type { ResponsesPayload } from "~/services/copilot/create-responses"
 import { normalizeResponsesPayload } from "~/routes/responses/handler"
 import {
   adaptResponsesPayloadForCopilot,
+  adaptStaleAgentHistoryForCopilot,
   normalizeResponsesInput,
+  recoverStaleAgentHistoryStream,
   restoreCodexCollaborationToolNames,
+  type ResponsesStreamItem,
 } from "~/services/copilot/create-responses"
 
 const payload = (model: string): ResponsesPayload => ({
@@ -48,6 +51,49 @@ const encryptedAgentMessage = (id: string) => ({
     { type: "encrypted_content", encrypted_content: "agent-secret" },
   ],
 })
+
+const interAgentAssistantMessage = {
+  type: "message",
+  role: "assistant",
+  content: [
+    {
+      type: "output_text",
+      text: JSON.stringify({
+        author: "/root",
+        recipient: "/root/worker",
+        other_recipients: [],
+        content: "continue",
+        trigger_turn: true,
+      }),
+    },
+  ],
+}
+
+const streamOf = (
+  ...items: Array<ResponsesStreamItem>
+): AsyncIterable<ResponsesStreamItem> => ({
+  [Symbol.asyncIterator](): AsyncIterator<ResponsesStreamItem> {
+    let index = 0
+    return {
+      next: () =>
+        Promise.resolve(
+          index < items.length ?
+            { done: false, value: items[index++] }
+          : { done: true, value: undefined },
+        ),
+    }
+  },
+})
+
+const streamEvent = (value: unknown): ResponsesStreamItem => ({
+  data: JSON.stringify(value),
+})
+
+const collectStream = async (stream: AsyncIterable<ResponsesStreamItem>) => {
+  const items: Array<ResponsesStreamItem> = []
+  for await (const item of stream) items.push(item)
+  return items
+}
 
 describe("Responses request normalization", () => {
   test("normalizes a string input into one user message", () => {
@@ -166,7 +212,8 @@ describe("Copilot multi-agent namespace compatibility", () => {
       ],
     } as unknown as ResponsesPayload
 
-    expect(adaptResponsesPayloadForCopilot(input).input).toEqual([
+    expect(adaptResponsesPayloadForCopilot(input)).toBe(input)
+    expect(adaptStaleAgentHistoryForCopilot(input).input).toEqual([
       {
         type: "agent_message",
         id: "amsg_consumed",
@@ -188,6 +235,206 @@ describe("Copilot multi-agent namespace compatibility", () => {
     expect(input.input[2]).toMatchObject({
       content: [{ type: "input_text" }, { type: "encrypted_content" }],
     })
+  })
+
+  test("does not treat serialized inter-agent instructions as model output", () => {
+    const input = {
+      model: "gpt-5.6-sol",
+      input: [
+        encryptedAgentMessage("amsg_before_instruction"),
+        interAgentAssistantMessage,
+        encryptedAgentMessage("amsg_after_instruction"),
+      ],
+    } as unknown as ResponsesPayload
+
+    expect(Object.is(adaptStaleAgentHistoryForCopilot(input), input)).toBe(true)
+    expect(input.input).toEqual([
+      encryptedAgentMessage("amsg_before_instruction"),
+      interAgentAssistantMessage,
+      encryptedAgentMessage("amsg_after_instruction"),
+    ])
+  })
+
+  test("treats ordinary assistant messages as model output", () => {
+    const input = {
+      model: "gpt-5.6-sol",
+      input: [
+        encryptedAgentMessage("amsg_consumed"),
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "acknowledged" }],
+        },
+      ],
+    } as unknown as ResponsesPayload
+
+    expect(adaptStaleAgentHistoryForCopilot(input).input[0]).toMatchObject({
+      content: [{ type: "input_text" }],
+    })
+  })
+
+  test("agent-history compatibility adaptation is idempotent", () => {
+    const input = {
+      model: "gpt-5.6-sol",
+      input: [
+        encryptedAgentMessage("amsg_consumed"),
+        {
+          type: "reasoning",
+          summary: [],
+          content: null,
+          encrypted_content: "reasoning-secret",
+        },
+      ],
+    } as unknown as ResponsesPayload
+
+    const first = adaptStaleAgentHistoryForCopilot(input)
+    const second = adaptStaleAgentHistoryForCopilot(first)
+    expect(second).toEqual(first)
+    expect(Object.is(second, first)).toBe(true)
+  })
+})
+
+describe("Codex stale agent history recovery", () => {
+  test("does not retry a successful response stream", async () => {
+    const created = streamEvent({ type: "response.created" })
+    const output = streamEvent({ type: "response.output_item.added" })
+    const completed = streamEvent({ type: "response.completed" })
+    let retries = 0
+
+    const recovered = recoverStaleAgentHistoryStream(
+      streamOf(created, output, completed),
+      () => {
+        retries += 1
+        return Promise.resolve(streamOf())
+      },
+    )
+
+    expect(await collectStream(recovered)).toEqual([created, output, completed])
+    expect(retries).toBe(0)
+  })
+
+  test("retries an unexplained empty failure before output", async () => {
+    const failedCreated = streamEvent({ type: "response.created" })
+    const keepAlive = { event: "ping" }
+    const metadata = streamEvent({ type: "response.metadata" })
+    const malformed = { data: "not-json" }
+    const failed = streamEvent({
+      type: "response.failed",
+      response: {
+        id: "resp_failed",
+        status: "failed",
+        error: null,
+        output: [],
+      },
+    })
+    const retryCreated = streamEvent({ type: "response.created" })
+    const completed = streamEvent({ type: "response.completed" })
+    let retries = 0
+
+    const recovered = recoverStaleAgentHistoryStream(
+      streamOf(failedCreated, keepAlive, metadata, malformed, failed),
+      () => {
+        retries += 1
+        return Promise.resolve(streamOf(retryCreated, completed))
+      },
+    )
+
+    expect(await collectStream(recovered)).toEqual([retryCreated, completed])
+    expect(retries).toBe(1)
+  })
+
+  test("does not retry a structured response failure", async () => {
+    const created = streamEvent({ type: "response.created" })
+    const failed = streamEvent({
+      type: "response.failed",
+      response: {
+        status: "failed",
+        error: { code: "invalid_request", message: "bad input" },
+        output: [],
+      },
+    })
+    let retries = 0
+
+    const recovered = recoverStaleAgentHistoryStream(
+      streamOf(created, failed),
+      () => {
+        retries += 1
+        return Promise.resolve(streamOf())
+      },
+    )
+
+    expect(await collectStream(recovered)).toEqual([created, failed])
+    expect(retries).toBe(0)
+  })
+
+  test("does not retry after any response output was exposed", async () => {
+    const created = streamEvent({ type: "response.created" })
+    const output = streamEvent({ type: "response.output_item.added" })
+    const failed = streamEvent({
+      type: "response.failed",
+      response: { status: "failed", error: null, output: [] },
+    })
+    let retries = 0
+
+    const recovered = recoverStaleAgentHistoryStream(
+      streamOf(created, output, failed),
+      () => {
+        retries += 1
+        return Promise.resolve(streamOf())
+      },
+    )
+
+    expect(await collectStream(recovered)).toEqual([created, output, failed])
+    expect(retries).toBe(0)
+  })
+
+  test("fails open when the pre-output buffer reaches its bound", async () => {
+    const created = streamEvent({ type: "response.created" })
+    const keepAlives = Array.from({ length: 33 }, (_, index) => ({
+      event: `ping-${index}`,
+    }))
+    const failed = streamEvent({
+      type: "response.failed",
+      response: { status: "failed", error: null, output: [] },
+    })
+    const inputItems = [created, ...keepAlives, failed]
+    let retries = 0
+
+    const recovered = recoverStaleAgentHistoryStream(
+      streamOf(...inputItems),
+      () => {
+        retries += 1
+        return Promise.resolve(streamOf())
+      },
+    )
+
+    expect(await collectStream(recovered)).toEqual(inputItems)
+    expect(retries).toBe(0)
+  })
+
+  test("fails open when the pre-output buffer reaches its byte bound", async () => {
+    const created = streamEvent({ type: "response.created" })
+    const oversizedMetadata = streamEvent({
+      type: "response.metadata",
+      metadata: "x".repeat(65_536),
+    })
+    const failed = streamEvent({
+      type: "response.failed",
+      response: { status: "failed", error: null, output: [] },
+    })
+    const inputItems = [created, oversizedMetadata, failed]
+    let retries = 0
+
+    const recovered = recoverStaleAgentHistoryStream(
+      streamOf(...inputItems),
+      () => {
+        retries += 1
+        return Promise.resolve(streamOf())
+      },
+    )
+
+    expect(await collectStream(recovered)).toEqual(inputItems)
+    expect(retries).toBe(0)
   })
 
   test("restores namespaced collaboration function names", () => {
