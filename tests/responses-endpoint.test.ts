@@ -38,6 +38,17 @@ const collaborationPayload = (v2: boolean): ResponsesPayload => ({
   ],
 })
 
+const encryptedAgentMessage = (id: string) => ({
+  type: "agent_message",
+  id,
+  author: "/root/worker",
+  recipient: "/root",
+  content: [
+    { type: "input_text", text: "worker result" },
+    { type: "encrypted_content", encrypted_content: "agent-secret" },
+  ],
+})
+
 describe("Responses request normalization", () => {
   test("normalizes a string input into one user message", () => {
     const input: ResponsesPayload = {
@@ -138,6 +149,45 @@ describe("Copilot multi-agent namespace compatibility", () => {
       input: Array<{ content: Array<{ nested: { name: string } }> }>
     }
     expect(output.input[0].content[0].nested.name).toBe("codex_collaboration")
+  })
+
+  test("strips consumed agent encryption but preserves pending agent content", () => {
+    const input = {
+      model: "gpt-5.6-sol",
+      input: [
+        encryptedAgentMessage("amsg_consumed"),
+        {
+          type: "reasoning",
+          summary: [],
+          content: null,
+          encrypted_content: "reasoning-secret",
+        },
+        encryptedAgentMessage("amsg_pending"),
+      ],
+    } as unknown as ResponsesPayload
+
+    expect(adaptResponsesPayloadForCopilot(input).input).toEqual([
+      {
+        type: "agent_message",
+        id: "amsg_consumed",
+        author: "/root/worker",
+        recipient: "/root",
+        content: [{ type: "input_text", text: "worker result" }],
+      },
+      {
+        type: "reasoning",
+        summary: [],
+        content: null,
+        encrypted_content: "reasoning-secret",
+      },
+      encryptedAgentMessage("amsg_pending"),
+    ])
+    expect(input.input[0]).toMatchObject({
+      content: [{ type: "input_text" }, { type: "encrypted_content" }],
+    })
+    expect(input.input[2]).toMatchObject({
+      content: [{ type: "input_text" }, { type: "encrypted_content" }],
+    })
   })
 
   test("restores namespaced collaboration function names", () => {

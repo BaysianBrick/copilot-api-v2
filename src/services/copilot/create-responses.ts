@@ -171,10 +171,63 @@ export function adaptResponsesPayloadForCopilot(
   payload: ResponsesPayload,
 ): NormalizedResponsesPayload {
   const normalizedPayload = normalizeResponsesInput(payload)
-  const [input, changed] = adaptNestedValue(normalizedPayload.input)
-  return changed ?
-      { ...normalizedPayload, input: input as Array<ResponsesInputItem> }
-    : normalizedPayload
+  const historyCompatibleInput = stripConsumedAgentEncryption(
+    normalizedPayload.input,
+  )
+  const [input, changed] = adaptNestedValue(historyCompatibleInput)
+  if (changed) {
+    return { ...normalizedPayload, input: input as Array<ResponsesInputItem> }
+  }
+  if (historyCompatibleInput === normalizedPayload.input) {
+    return normalizedPayload
+  }
+  return { ...normalizedPayload, input: historyCompatibleInput }
+}
+
+function stripConsumedAgentEncryption(
+  input: Array<ResponsesInputItem>,
+): Array<ResponsesInputItem> {
+  let laterModelOutput = false
+  let changed = false
+  const compatibleInput = [...input]
+
+  for (let index = input.length - 1; index >= 0; index--) {
+    const item = input[index] as unknown as Record<string, unknown>
+    if (laterModelOutput && item.type === "agent_message") {
+      const content = Array.isArray(item.content) ? item.content : []
+      const compatibleContent = content.filter(
+        (part) =>
+          !part
+          || typeof part !== "object"
+          || (part as Record<string, unknown>).type !== "encrypted_content",
+      )
+      if (compatibleContent.length !== content.length) {
+        compatibleInput[index] = {
+          ...item,
+          content: compatibleContent,
+        } as unknown as ResponsesInputItem
+        changed = true
+      }
+    }
+    if (isModelOutput(item)) laterModelOutput = true
+  }
+
+  return changed ? compatibleInput : input
+}
+
+function isModelOutput(item: Record<string, unknown>): boolean {
+  if (item.type === "message") return item.role === "assistant"
+  return [
+    "compaction",
+    "context_compaction",
+    "custom_tool_call",
+    "function_call",
+    "image_generation_call",
+    "local_shell_call",
+    "reasoning",
+    "tool_search_call",
+    "web_search_call",
+  ].includes(String(item.type))
 }
 
 function adaptNestedValue(value: unknown): [unknown, boolean] {
@@ -248,6 +301,25 @@ async function* restoreCodexCollaborationStream(
 
     try {
       const parsed = JSON.parse(item.data) as unknown
+      if (
+        parsed
+        && typeof parsed === "object"
+        && (parsed as Record<string, unknown>).type === "response.failed"
+      ) {
+        const response = (parsed as Record<string, unknown>).response
+        const details =
+          response && typeof response === "object" ?
+            (response as Record<string, unknown>)
+          : {}
+        consola.error(
+          "Upstream Responses failed:",
+          JSON.stringify({
+            id: details.id ?? null,
+            status: details.status ?? null,
+            error: details.error ?? null,
+          }),
+        )
+      }
       const [restored, changed] = restoreNestedToolNames(parsed)
       yield changed ? { ...item, data: JSON.stringify(restored) } : item
     } catch {
