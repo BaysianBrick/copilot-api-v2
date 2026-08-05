@@ -171,11 +171,52 @@ export function adaptResponsesPayloadForCopilot(
   payload: ResponsesPayload,
 ): NormalizedResponsesPayload {
   const normalizedPayload = normalizeResponsesInput(payload)
-  const [input, changed] = adaptNestedValue(normalizedPayload.input)
+  const plaintextCompatibleInput = adaptPlaintextAgentContent(
+    normalizedPayload.input,
+  )
+  const [input, changed] = adaptNestedValue(plaintextCompatibleInput)
   if (changed) {
     return { ...normalizedPayload, input: input as Array<ResponsesInputItem> }
   }
-  return normalizedPayload
+  return plaintextCompatibleInput === normalizedPayload.input ?
+      normalizedPayload
+    : { ...normalizedPayload, input: plaintextCompatibleInput }
+}
+
+function adaptPlaintextAgentContent(
+  input: Array<ResponsesInputItem>,
+): Array<ResponsesInputItem> {
+  const compatibleInput = input.map((item) => {
+    const record = item as unknown as Record<string, unknown>
+    if (record.type !== "agent_message" || !Array.isArray(record.content)) {
+      return item
+    }
+
+    const originalContent = record.content
+    const content = originalContent.map((part: unknown) => {
+      if (!part || typeof part !== "object") return part
+      const contentPart = part as Record<string, unknown>
+      const encryptedContent = contentPart.encrypted_content
+      if (
+        contentPart.type !== "encrypted_content"
+        || typeof encryptedContent !== "string"
+        || !/\s/.test(encryptedContent)
+      ) {
+        return part
+      }
+
+      return { type: "input_text", text: encryptedContent }
+    })
+
+    const contentChanged = content.some(
+      (part, index) => part !== originalContent[index],
+    )
+    if (!contentChanged) return item
+    return { ...record, content } as unknown as ResponsesInputItem
+  })
+
+  const changed = compatibleInput.some((item, index) => item !== input[index])
+  return changed ? compatibleInput : input
 }
 
 export function adaptStaleAgentHistoryForCopilot(

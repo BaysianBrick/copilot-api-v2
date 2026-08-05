@@ -163,6 +163,59 @@ describe("Copilot multi-agent namespace compatibility", () => {
     ])
   })
 
+  test("downgrades clearly plaintext agent content mislabeled as encrypted", () => {
+    const input = {
+      model: "gpt-5.6-terra",
+      input: [
+        {
+          type: "agent_message",
+          author: "/root",
+          recipient: "/root/worker",
+          content: [
+            { type: "input_text", text: "Message Type: NEW_TASK\nPayload:\n" },
+            {
+              type: "encrypted_content",
+              encrypted_content: "Read package.json and report its version.",
+            },
+          ],
+        },
+      ],
+    } as unknown as ResponsesPayload
+
+    expect(adaptResponsesPayloadForCopilot(input).input[0]).toMatchObject({
+      type: "agent_message",
+      content: [
+        { type: "input_text", text: "Message Type: NEW_TASK\nPayload:\n" },
+        {
+          type: "input_text",
+          text: "Read package.json and report its version.",
+        },
+      ],
+    })
+  })
+
+  test("preserves opaque encrypted agent content", () => {
+    const encryptedContent = `gAAAAA${"x".repeat(120)}`
+    const input = {
+      model: "gpt-5.6-terra",
+      input: [
+        {
+          type: "agent_message",
+          author: "/root",
+          recipient: "/root/worker",
+          content: [
+            {
+              type: "encrypted_content",
+              encrypted_content: encryptedContent,
+            },
+          ],
+        },
+      ],
+    } as unknown as ResponsesPayload
+
+    expect(Object.is(adaptResponsesPayloadForCopilot(input), input)).toBe(true)
+  })
+
   test("aliases the V2 collaboration namespace", () => {
     const input = collaborationPayload(true)
     const output = adaptResponsesPayloadForCopilot(input)
@@ -212,8 +265,8 @@ describe("Copilot multi-agent namespace compatibility", () => {
       ],
     } as unknown as ResponsesPayload
 
-    expect(adaptResponsesPayloadForCopilot(input)).toBe(input)
-    expect(adaptStaleAgentHistoryForCopilot(input).input).toEqual([
+    expect(Object.is(adaptResponsesPayloadForCopilot(input), input)).toBe(true)
+    expect(adaptStaleAgentHistoryForCopilot(input).input as unknown).toEqual([
       {
         type: "agent_message",
         id: "amsg_consumed",
@@ -248,7 +301,7 @@ describe("Copilot multi-agent namespace compatibility", () => {
     } as unknown as ResponsesPayload
 
     expect(Object.is(adaptStaleAgentHistoryForCopilot(input), input)).toBe(true)
-    expect(input.input).toEqual([
+    expect(input.input as unknown).toEqual([
       encryptedAgentMessage("amsg_before_instruction"),
       interAgentAssistantMessage,
       encryptedAgentMessage("amsg_after_instruction"),
