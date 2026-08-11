@@ -347,6 +347,33 @@ describe("Copilot multi-agent namespace compatibility", () => {
   })
 })
 
+describe("Resumed namespace tool compatibility", () => {
+  test("fills blank descriptions without mutating the request", () => {
+    const input = collaborationPayload(true)
+    const namespace = input.input[0] as {
+      tools: Array<{ description?: string; name: string }>
+    }
+    namespace.tools[0].description = ""
+    namespace.tools.push({
+      name: "wait_agent",
+      description: "Wait for an agent.",
+    })
+
+    const output = adaptResponsesPayloadForCopilot(input)
+
+    expect(output.input[0]).toMatchObject({
+      type: "namespace",
+      name: "codex_collaboration",
+      tools: [
+        { name: "spawn_agent", description: "Invoke spawn_agent." },
+        { name: "wait_agent", description: "Wait for an agent." },
+      ],
+    })
+    expect((input.input[0] as { name: string }).name).toBe("collaboration")
+    expect(namespace.tools[0].description).toBe("")
+  })
+})
+
 describe("Codex stale agent history recovery", () => {
   test("does not retry a successful response stream", async () => {
     const created = streamEvent({ type: "response.created" })

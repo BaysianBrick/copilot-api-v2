@@ -324,13 +324,27 @@ function adaptNestedValue(value: unknown): [unknown, boolean] {
 
   if (!value || typeof value !== "object") return [value, false]
   const record = value as Record<string, unknown>
-  if (isCodexV2CollaborationNamespace(record)) {
-    return [{ ...record, name: CODEX_V2_COLLABORATION_ALIAS }, true]
-  }
+  const isV2CollaborationNamespace = isCodexV2CollaborationNamespace(record)
+  const sourceRecord =
+    isV2CollaborationNamespace ?
+      { ...record, name: CODEX_V2_COLLABORATION_ALIAS }
+    : record
 
-  let changed = false
+  let changed = isV2CollaborationNamespace
   const output: Record<string, unknown> = {}
-  for (const [key, item] of Object.entries(record)) {
+  for (const [key, item] of Object.entries(sourceRecord)) {
+    if (
+      key === "description"
+      && sourceRecord.type === "function"
+      && typeof item === "string"
+      && item.trim().length === 0
+    ) {
+      const toolName =
+        typeof sourceRecord.name === "string" ? sourceRecord.name.trim() : ""
+      output[key] = toolName ? `Invoke ${toolName}.` : "Invoke this tool."
+      changed = true
+      continue
+    }
     const [adapted, itemChanged] = adaptNestedValue(item)
     if (itemChanged) changed = true
     output[key] = adapted
