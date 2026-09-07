@@ -327,7 +327,13 @@ function adaptNestedValue(value: unknown): [unknown, boolean] {
   const isV2CollaborationNamespace = isCodexV2CollaborationNamespace(record)
   const sourceRecord =
     isV2CollaborationNamespace ?
-      { ...record, name: CODEX_V2_COLLABORATION_ALIAS }
+      {
+        ...record,
+        name: CODEX_V2_COLLABORATION_ALIAS,
+        tools: (record.tools as Array<ResponsesNamespaceTool>).map((tool) =>
+          adaptCollaborationMessageSchema(tool),
+        ),
+      }
     : record
 
   let changed = isV2CollaborationNamespace
@@ -350,6 +356,30 @@ function adaptNestedValue(value: unknown): [unknown, boolean] {
     output[key] = adapted
   }
   return changed ? [output, true] : [value, false]
+}
+
+function adaptCollaborationMessageSchema(
+  tool: ResponsesNamespaceTool,
+): ResponsesNamespaceTool {
+  const properties = tool.parameters?.properties
+  const message = properties?.message
+  if (
+    !message
+    || typeof message !== "object"
+    || Array.isArray(message)
+    || (message as Record<string, unknown>).encrypted !== true
+  ) {
+    return tool
+  }
+  const compatibleMessage = { ...(message as Record<string, unknown>) }
+  delete compatibleMessage.encrypted
+  return {
+    ...tool,
+    parameters: {
+      ...tool.parameters,
+      properties: { ...properties, message: compatibleMessage },
+    },
+  }
 }
 
 function isCodexV2CollaborationNamespace(

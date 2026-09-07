@@ -231,7 +231,75 @@ describe("Copilot multi-agent namespace compatibility", () => {
     const input = collaborationPayload(false)
     expect(Object.is(adaptResponsesPayloadForCopilot(input), input)).toBe(true)
   })
+})
 
+describe("Codex V2 plaintext handoff compatibility", () => {
+  test("requests plaintext V2 handoffs across model encryption domains", () => {
+    const input = collaborationPayload(true)
+    const namespace = input.input[0] as unknown as {
+      tools: Array<Record<string, unknown>>
+    }
+    const parameters = {
+      type: "object",
+      properties: {
+        agent_type: { type: "string" },
+        message: {
+          type: "string",
+          description: "Initial plain-text task for the new agent.",
+          encrypted: true,
+        },
+        other: { type: "string", encrypted: true },
+      },
+      required: ["message"],
+      additionalProperties: false,
+    }
+    namespace.tools[0].parameters = parameters
+    namespace.tools.push({ type: "function", name: "send_input", parameters })
+    const before = structuredClone(input)
+
+    const output = adaptResponsesPayloadForCopilot(input)
+    const adaptedNamespace = output.input[0] as unknown as {
+      name: string
+      tools: Array<{
+        parameters: Omit<typeof parameters, "properties"> & {
+          properties: Record<string, Record<string, unknown>>
+        }
+      }>
+    }
+    expect(adaptedNamespace.name).toBe("codex_collaboration")
+    for (const tool of adaptedNamespace.tools) {
+      expect(tool.parameters.properties.message).toEqual({
+        type: "string",
+        description: "Initial plain-text task for the new agent.",
+      })
+      expect(tool.parameters.properties.other.encrypted).toBe(true)
+      expect(tool.parameters.required).toEqual(["message"])
+      expect(tool.parameters.additionalProperties).toBe(false)
+    }
+    expect(input).toEqual(before)
+    expect(adaptResponsesPayloadForCopilot(output)).toBe(output)
+  })
+
+  test("preserves message encryption on unrelated and legacy tools", () => {
+    for (const name of ["collaboration", "custom_tools"]) {
+      const input = collaborationPayload(name !== "collaboration")
+      const namespace = input.input[0] as unknown as {
+        name: string
+        tools: Array<{ parameters: { properties: Record<string, unknown> } }>
+      }
+      namespace.name = name
+      namespace.tools[0].parameters.properties.message = {
+        type: "string",
+        encrypted: true,
+      }
+      expect(Object.is(adaptResponsesPayloadForCopilot(input), input)).toBe(
+        true,
+      )
+    }
+  })
+})
+
+describe("Codex V2 nested tools and history compatibility", () => {
   test("aliases a V2 namespace nested inside an input item", () => {
     const namespace = collaborationPayload(true).input[0]
     const input = {
