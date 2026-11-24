@@ -158,10 +158,11 @@ export const createChatCompletions = async (
   }
 }
 
-const createViaChatCompletions = async (
+export const createViaChatCompletions = async (
   payload: ChatCompletionsPayload,
   clientHeaders?: Record<string, string>,
 ) => {
+  stripIncompatibleReasoningParams(payload)
   const enableVision = payload.messages.some(
     (x) =>
       typeof x.content !== "string"

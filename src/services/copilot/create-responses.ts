@@ -9,6 +9,8 @@ import {
 import { HTTPError } from "~/lib/error"
 import { state } from "~/lib/state"
 
+import { createGeminiResponses } from "./gemini-responses"
+
 // Minimal client for GitHub Copilot's `/responses` endpoint (the OpenAI
 // Responses API). Newer models such as the GPT-5 family are not accessible via
 // `/chat/completions` and must go through here.
@@ -71,6 +73,8 @@ export type ResponsesInputItem =
   | ResponsesFunctionCallItem
   | ResponsesFunctionCallOutputItem
   | ResponsesNamespaceItem
+  | ResponsesOutputCustomToolCall
+  | { type: "custom_tool_call_output"; call_id: string; output: string }
 
 export type ResponsesInput = string | Array<ResponsesInputItem>
 
@@ -143,10 +147,20 @@ export interface ResponsesOutputReasoning {
   content?: Array<unknown>
 }
 
+export interface ResponsesOutputCustomToolCall {
+  type: "custom_tool_call"
+  id?: string
+  call_id: string
+  name: string
+  input: string
+  status?: string
+}
+
 export type ResponsesOutputItem =
   | ResponsesOutputMessage
   | ResponsesOutputFunctionCall
   | ResponsesOutputReasoning
+  | ResponsesOutputCustomToolCall
 
 export interface CopilotUsageDetail {
   token_count: number
@@ -618,6 +632,10 @@ export const createResponses = async (
   clientHeaders?: Record<string, string>,
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
+
+  if (/^gemini-4-(?:carbon|neon|hydrogen)$/.test(payload.model)) {
+    return createGeminiResponses(payload, clientHeaders)
+  }
 
   const upstreamPayload = adaptResponsesPayloadForCopilot(payload)
   const recoveryPayload = adaptStaleAgentHistoryForCopilot(upstreamPayload)
