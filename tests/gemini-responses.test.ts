@@ -161,17 +161,18 @@ describe("Gemini Responses translation", () => {
   })
 })
 
-test("routes all three Gemini models through chat but keeps GPT on Responses", async () => {
+test("routes Gemini 4 models through chat but keeps GPT on Responses", async () => {
   const savedToken = state.copilotToken
   state.copilotToken = "fixture-token"
   const fetchMock = spyOn(globalThis, "fetch")
   try {
     for (const id of [
+      "gemini-4-argon",
       "gemini-4-carbon",
       "gemini-4-neon",
       "gemini-4-hydrogen",
     ]) {
-      fetchMock.mockResolvedValueOnce(Response.json(chat()))
+      fetchMock.mockResolvedValueOnce(Response.json({ ...chat(), model: id }))
       await createResponses(
         { model: id, input: "hi" },
         { "session-id": "fixture" },

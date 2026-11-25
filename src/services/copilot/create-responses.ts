@@ -214,7 +214,7 @@ function adaptPlaintextAgentContent(
       if (
         contentPart.type !== "encrypted_content"
         || typeof encryptedContent !== "string"
-        || !/\s/.test(encryptedContent)
+        || !/[\s\p{Unified_Ideograph}]/u.test(encryptedContent)
       ) {
         return part
       }
@@ -633,7 +633,7 @@ export const createResponses = async (
 ) => {
   if (!state.copilotToken) throw new Error("Copilot token not found")
 
-  if (/^gemini-4-(?:carbon|neon|hydrogen)$/.test(payload.model)) {
+  if (/^gemini-4-(?:argon|carbon|neon|hydrogen)$/.test(payload.model)) {
     return createGeminiResponses(payload, clientHeaders)
   }
 

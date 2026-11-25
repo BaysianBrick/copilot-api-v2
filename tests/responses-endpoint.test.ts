@@ -194,6 +194,29 @@ describe("Copilot multi-agent namespace compatibility", () => {
     })
   })
 
+  test("downgrades unspaced Chinese agent replies without losing content", () => {
+    const text =
+      "\u5df2\u6838\u5bf9\u5168\u90e8\u6307\u5b9a\u54c8\u5e0c\uff0c\u51bb\u7ed3\u8303\u56f4\u4e00\u81f4\u3002beta=0.206"
+    const input = {
+      model: "gpt-5.6-sol",
+      input: [
+        {
+          type: "agent_message",
+          author: "/root/astra_reviewer",
+          recipient: "/root",
+          content: [{ type: "encrypted_content", encrypted_content: text }],
+        },
+      ],
+    } as unknown as ResponsesPayload
+    const before = structuredClone(input)
+
+    expect(text).not.toMatch(/\s/)
+    expect(adaptResponsesPayloadForCopilot(input).input[0]).toMatchObject({
+      content: [{ type: "input_text", text }],
+    })
+    expect(input).toEqual(before)
+  })
+
   test("preserves opaque encrypted agent content", () => {
     const encryptedContent = `gAAAAA${"x".repeat(120)}`
     const input = {
